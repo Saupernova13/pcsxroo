@@ -4,6 +4,7 @@
 #pragma once
 
 #include "DebugTools/DebugInterface.h"
+#include "DebugTools/MIPSAnalyst.h"
 
 #include "common/Pcsx2Types.h"
 
@@ -56,6 +57,25 @@ namespace DebuggerControl
 
 	size_t AddStopCallback(StopCallback callback);
 	void RemoveStopCallback(size_t handle);
+
+	enum class StepMode
+	{
+		Into,
+		Over,
+		Out
+	};
+
+	// Pure: where execution lands after one step from pc. Extracted so it can be tested
+	// without a VM, since this is the logic most likely to break.
+	u32 ComputeStepTarget(StepMode mode, u32 pc, const MIPSAnalyst::MipsOpcodeInfo& info);
+
+	// CPU thread only, VM must be paused. Sets a temporary stepping breakpoint at the
+	// computed target and resumes. Returns false if the CPU is not in a steppable state,
+	// or for Out when there is no caller frame to return to.
+	bool Step(BreakPointCpu cpu, StepMode mode);
+
+	// CPU thread only, VM must be paused. Temporary breakpoint at addr, then resume.
+	bool RunTo(BreakPointCpu cpu, u32 addr);
 
 	// Drops all state. Tests only.
 	void ResetForTesting();

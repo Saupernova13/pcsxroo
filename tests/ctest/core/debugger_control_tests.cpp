@@ -3,6 +3,8 @@
 
 #include "DebugTools/DebuggerControl.h"
 
+#include "DebugTools/MIPSAnalyst.h"
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -20,6 +22,13 @@ namespace
 		event.pc = pc;
 		event.bp_addr = bp_addr;
 		return event;
+	}
+
+	MIPSAnalyst::MipsOpcodeInfo MakeInfo()
+	{
+		MIPSAnalyst::MipsOpcodeInfo info{};
+		info.cpu = nullptr;
+		return info;
 	}
 } // namespace
 
@@ -109,4 +118,62 @@ TEST(DebuggerControl, StopReasonNamesAreStableProtocolStrings)
 	EXPECT_STREQ(DebuggerControl::StopReasonName(DebuggerControl::StopReason::UserPause), "user");
 	EXPECT_STREQ(DebuggerControl::StopReasonName(DebuggerControl::StopReason::Entry), "entry");
 	EXPECT_STREQ(DebuggerControl::StopReasonName(DebuggerControl::StopReason::VMShutdown), "vm_shutdown");
+}
+
+TEST(DebuggerControlStep, PlainInstructionAdvancesOneWord)
+{
+	MIPSAnalyst::MipsOpcodeInfo info = MakeInfo();
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, info), 0x100004u);
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Over, 0x100000, info), 0x100004u);
+}
+
+TEST(DebuggerControlStep, UnconditionalBranchGoesToTheTarget)
+{
+	MIPSAnalyst::MipsOpcodeInfo info = MakeInfo();
+	info.isBranch = true;
+	info.isConditional = false;
+	info.branchTarget = 0x200000;
+
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, info), 0x200000u);
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Over, 0x100000, info), 0x200000u);
+}
+
+// Step-over must not follow a call: it lands after the delay slot instead.
+TEST(DebuggerControlStep, StepOverSkipsALinkedBranchAndItsDelaySlot)
+{
+	MIPSAnalyst::MipsOpcodeInfo info = MakeInfo();
+	info.isBranch = true;
+	info.isConditional = false;
+	info.isLinkedBranch = true;
+	info.branchTarget = 0x200000;
+
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Over, 0x100000, info), 0x100008u);
+	// Step-into still follows the call.
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, info), 0x200000u);
+}
+
+TEST(DebuggerControlStep, ConditionalBranchFollowsWhetherTheConditionIsMet)
+{
+	MIPSAnalyst::MipsOpcodeInfo taken = MakeInfo();
+	taken.isBranch = true;
+	taken.isConditional = true;
+	taken.conditionMet = true;
+	taken.branchTarget = 0x200000;
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, taken), 0x200000u);
+
+	MIPSAnalyst::MipsOpcodeInfo not_taken = taken;
+	not_taken.conditionMet = false;
+	// Skips the branch and its delay slot.
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, not_taken), 0x100008u);
+}
+
+TEST(DebuggerControlStep, SyscallIsAlwaysTakenOnStepInto)
+{
+	MIPSAnalyst::MipsOpcodeInfo info = MakeInfo();
+	info.isSyscall = true;
+	info.branchTarget = 0x80000180;
+
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Into, 0x100000, info), 0x80000180u);
+	// Step-over does not enter the exception handler.
+	EXPECT_EQ(DebuggerControl::ComputeStepTarget(DebuggerControl::StepMode::Over, 0x100000, info), 0x100004u);
 }
