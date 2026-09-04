@@ -62,6 +62,14 @@ if "%~1"=="" (
   rem and fails with a bare 0xC0000135 when it is not.
   echo === Installing to bin ===
   "%CMAKE%" --install build || exit /b 1
+
+  rem cmake --install does not copy WinPixEventRuntime.dll. Release builds do not reference
+  rem it, so upstream CI never notices, but a Devel build links against it and dies at
+  rem startup with a "code execution cannot proceed" message box. That box is invisible to a
+  rem non-interactive session, where it looks like the emulator silently hanging instead.
+  if exist "%REPO%\3rdparty\winpixeventruntime\bin\WinPixEventRuntime.dll" (
+    copy /y "%REPO%\3rdparty\winpixeventruntime\bin\WinPixEventRuntime.dll" "%REPO%\bin\" >nul
+  )
 ) else (
   echo === Building %* ===
   "%CMAKE%" --build build --parallel --target %* || exit /b 1
