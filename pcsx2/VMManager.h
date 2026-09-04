@@ -142,6 +142,11 @@ namespace VMManager
 	/// Reloads settings, and applies any changes present.
 	void ApplySettings();
 
+	/// Forces the PCSXROO debug server on at the given port, overriding the ini.
+	/// Set from the -debugserver command line flag. Applied on every settings load, so a
+	/// settings reload cannot silently drop it. RetroAchievements hardcore mode still wins.
+	void SetDebugServerPortOverride(int port);
+
 	/// Reloads game specific settings, and applys any changes present.
 	bool ReloadGameSettings();
 

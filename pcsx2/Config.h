@@ -1357,6 +1357,7 @@ struct Pcsx2Config
 		EnablePatches : 1, // enables patch detection and application
 		EnableCheats : 1, // enables cheat detection and application
 		EnablePINE : 1, // enables inter-process communication
+		EnableDebugServer : 1, // enables the PCSXROO JSON debugger server (loopback only)
 		EnableWideScreenPatches : 1,
 		EnableNoInterlacingPatches : 1,
 		EnableFastBoot : 1,
@@ -1403,6 +1404,7 @@ struct Pcsx2Config
 	std::string GzipIsoIndexTemplate; // for quick-access index with gzipped ISO
 
 	int PINESlot;
+	int DebugServerPort;
 
 	int RtcYear;
 	int RtcMonth;

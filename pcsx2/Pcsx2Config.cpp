@@ -9,6 +9,7 @@
 #include "common/StringUtil.h"
 #include "common/SmallString.h"
 #include "Config.h"
+#include "DebugServer/DebugServer.h"
 #include "GS.h"
 #include "CDVD/CDVDcommon.h"
 #include "Host.h"
@@ -1979,6 +1980,7 @@ Pcsx2Config::Pcsx2Config()
 
 	GzipIsoIndexTemplate = "$(f).pindex.tmp";
 	PINESlot = 28011;
+	DebugServerPort = PCSXROO_DEBUG_SERVER_DEFAULT_PORT;
 	RtcYear = 0;
 	RtcMonth = 1;
 	RtcDay = 1;
@@ -1997,6 +1999,7 @@ void Pcsx2Config::LoadSaveCore(SettingsWrapper& wrap)
 	SettingsWrapBitBool(EnablePatches);
 	SettingsWrapBitBool(EnableCheats);
 	SettingsWrapBitBool(EnablePINE);
+	SettingsWrapBitBool(EnableDebugServer);
 	SettingsWrapBitBool(EnableWideScreenPatches);
 	SettingsWrapBitBool(EnableNoInterlacingPatches);
 	SettingsWrapBitBool(EnableFastBoot);
@@ -2035,6 +2038,7 @@ void Pcsx2Config::LoadSaveCore(SettingsWrapper& wrap)
 
 	SettingsWrapEntry(GzipIsoIndexTemplate);
 	SettingsWrapEntry(PINESlot);
+	SettingsWrapEntry(DebugServerPort);
 	SettingsWrapEntry(RtcYear);
 	SettingsWrapEntry(RtcMonth);
 	SettingsWrapEntry(RtcDay);

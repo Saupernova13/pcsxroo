@@ -159,6 +159,8 @@ static bool s_log_block_system_console = false;
 static bool s_log_force_file_log = false;
 
 static std::atomic<VMState> s_state{VMState::Shutdown};
+// Set once from the -debugserver command line flag; re-applied on every settings load.
+static std::optional<int> s_debug_server_port_override;
 static bool s_cpu_implementation_changed = false;
 static Threading::ThreadHandle s_vm_thread_handle;
 
@@ -662,11 +664,24 @@ void VMManager::ReloadInputBindings(bool force)
 	LoadInputBindings(*si, lock);
 }
 
+void VMManager::SetDebugServerPortOverride(int port)
+{
+	s_debug_server_port_override = port;
+}
+
 void VMManager::LoadCoreSettings(SettingsInterface& si)
 {
 	SettingsLoadWrapper slw(si);
 	EmuConfig.LoadSave(slw);
 	Patch::ApplyPatchSettingOverrides();
+
+	// Applied here, before the hardcore check below, so that -debugserver survives every
+	// settings reload but still loses to hardcore mode.
+	if (s_debug_server_port_override.has_value())
+	{
+		EmuConfig.EnableDebugServer = true;
+		EmuConfig.DebugServerPort = s_debug_server_port_override.value();
+	}
 
 	// Achievements hardcore mode disallows setting some configuration options.
 	EnforceAchievementsChallengeModeSettings();
@@ -3203,6 +3218,10 @@ void VMManager::EnforceAchievementsChallengeModeSettings()
 	// Input recording/playback is probably an issue.
 	EmuConfig.EnableRecordingTools = false;
 	EmuConfig.EnablePINE = false;
+
+	// The debug server is strictly more powerful than PINE - arbitrary memory writes,
+	// breakpoints and execution control - so hardcore mode has to refuse it as well.
+	EmuConfig.EnableDebugServer = false;
 
 	// Framerates should be at default.
 	EmuConfig.GS.FramerateNTSC = Pcsx2Config::GSOptions::DEFAULT_FRAME_RATE_NTSC;
