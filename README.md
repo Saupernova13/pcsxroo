@@ -1,3 +1,34 @@
+# PCSXROO
+
+A fork of PCSX2 that exposes the debugger over a loopback JSON server and a `pcsxroo`
+command line client, so an agent can run a complete PS2 debugging session without touching
+the user interface.
+
+```
+tools\pcsxroo\build.cmd
+tools\pcsxroo\seed-portable.ps1
+
+bin\pcsxroo.exe launch --pause-on-entry "G:\roms\ps2\game.iso"
+bin\pcsxroo.exe bp add 0x12BBD0 --cond "$a0 == 2"
+bin\pcsxroo.exe run
+bin\pcsxroo.exe wait --since 0
+bin\pcsxroo.exe reg dump --category GPR
+```
+
+Breakpoints, memchecks, stepping, registers, memory, search, disassembly, assembly,
+symbols, the stack and threads are all reachable, along with booting, savestates,
+screenshots, frame advance and patch reload. The debugger window still works exactly as it
+did and shares the same core code.
+
+Full reference: **[docs/pcsxroo/cli.md](docs/pcsxroo/cli.md)**.
+
+The server is off by default, binds loopback only, and has no authentication. Never expose
+it to a network.
+
+---
+
+The upstream PCSX2 README follows.
+
 # PCSX2
 
 ![Windows Build Status](https://img.shields.io/github/actions/workflow/status/PCSX2/pcsx2/windows_build_matrix.yml?label=%F0%9F%96%A5%EF%B8%8F%20Windows%20Builds)
