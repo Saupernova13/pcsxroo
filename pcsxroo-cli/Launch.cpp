@@ -97,11 +97,20 @@ bool PcsxrooLaunch::Run(const Options& options, u64& pid, std::string& error)
 		return false;
 	}
 
-	std::string arguments = fmt::format("\"{}\" -batch -debugserver {}", emulator, options.port);
+	std::string arguments = fmt::format("\"{}\" -debugserver {}", emulator, options.port);
 	if (options.pause_on_entry)
 		arguments += " -pauseonentry";
-	if (!options.game.empty())
-		arguments += fmt::format(" \"{}\"", options.game);
+
+	if (options.game.empty())
+	{
+		// No game means boot the BIOS, which is what the smoke test uses. -batch is only
+		// added alongside a boot target: on its own it leaves nothing to boot.
+		arguments += " -bios";
+	}
+	else
+	{
+		arguments += fmt::format(" -batch \"{}\"", options.game);
+	}
 
 #ifdef _WIN32
 	STARTUPINFOW startup = {};

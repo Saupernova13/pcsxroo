@@ -157,8 +157,10 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 		QTranslator* base_translator = new QTranslator(qApp);
 		if (!base_translator->load(base_path))
 		{
-			QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-				QStringLiteral("Failed to find load base translation file for '%1':\n%2").arg(language).arg(base_path));
+			// Warned rather than shown in a dialog: a modal box here blocks startup
+			// before the debug server exists, which makes an unattended session impossible.
+			Console.Warning("Failed to load base translation file for '%s': %s",
+				language.toUtf8().constData(), base_path.toUtf8().constData());
 			delete base_translator;
 		}
 		else
@@ -180,8 +182,8 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 		}
 		else
 		{
-			QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-				QStringLiteral("Failed to load translation file for language '%1':\n%2").arg(language).arg(path));
+			Console.Warning("Failed to load translation file for language '%s': %s",
+				language.toUtf8().constData(), path.toUtf8().constData());
 			delete translator;
 			translator = nullptr;
 		}
@@ -189,9 +191,11 @@ void QtHost::InstallTranslator(QWidget* dialog_parent)
 	else
 	{
 #ifdef PCSX2_DEVBUILD
-		// For now, until we're sure this works on all platforms, we won't block users from starting if they're missing.
-		QMessageBox::warning(nullptr, QStringLiteral("Translation Error"),
-			QStringLiteral("Failed to find translation file for language '%1':\n%2").arg(language).arg(path));
+		// Upstream shows a dialog here in devel builds. PCSXROO cannot: any system locale
+		// without a shipped .qm (en-ZA, for one) would then block startup on a modal box
+		// that nobody is there to dismiss.
+		Console.Warning("No translation file for language '%s': %s",
+			language.toUtf8().constData(), path.toUtf8().constData());
 #endif
 	}
 
