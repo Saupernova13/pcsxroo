@@ -2652,10 +2652,16 @@ std::string DebugServerCommands::MakeStopEventLine(const DebuggerControl::StopEv
 
 void DebugServerCommands::ApplyHeldInputs()
 {
-	// Only while actually executing. Pad::SetControllerState dereferences the controller for
-	// the port without checking it exists, so writing to it while the VM is paused or being
-	// torn down - which is exactly the window stepping puts us in - is a null dereference.
-	if (VMManager::GetState() != VMState::Running)
+	// Pad::SetControllerState dereferences the controller for the port without checking it
+	// exists, so this must not run while the VM is being torn down. Paused, however, has to
+	// be allowed. The only caller is VSyncStart, which runs VSyncOnCPUThread first - and
+	// that is where frame advance pauses the VM, in the same vsync, ahead of this hook. A
+	// Running-only guard therefore drops the injected pad state on the final frame of every
+	// advance, and an advance of one frame is nothing but a final frame, which leaves single
+	// stepping unable to hold a button at all. Nothing calls this while the VM sits idle
+	// paused, so allowing Paused does not write the pad outside execution.
+	const VMState state = VMManager::GetState();
+	if (state != VMState::Running && state != VMState::Paused)
 		return;
 
 	// Applied after InputManager::PollSources, which has just overwritten the pad from the
