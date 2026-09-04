@@ -7,6 +7,8 @@
 #include "DebugServer/DebugServerDispatch.h"
 
 #include "DebugTools/Breakpoints.h"
+#include "DebugTools/MipsAssembler.h"
+#include "DebugTools/MipsStackWalk.h"
 
 #include "BuildVersion.h"
 #include "Host.h"
@@ -1467,6 +1469,442 @@ namespace
 		return DebugServerJson::MakeResult(request.id, result, allocator);
 	}
 
+	// --- code ---------------------------------------------------------------------------
+
+	std::string CmdDisassemble(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		const u32 count = std::clamp(ArgU32(request, "count", 16), 1u, 1024u);
+		const bool simplify = ArgBool(request, "simplify", true);
+
+		struct Line
+		{
+			u32 addr;
+			u32 opcode;
+			std::string text;
+			std::string symbol;
+		};
+
+		std::vector<Line> lines;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, count, simplify, &lines]() {
+				DebugInterface& cpu = DebugInterface::get(cpu_type);
+				for (u32 i = 0; i < count; i++)
+				{
+					const u32 at = addr + (i * 4);
+					Line line;
+					line.addr = at;
+					line.opcode = cpu.Read32(at);
+					line.text = cpu.disasm(at, simplify);
+
+					const FunctionInfo function = cpu.GetSymbolGuardian().FunctionOverlappingAddress(at);
+					if (!function.name.empty())
+						line.symbol = function.name;
+
+					lines.push_back(std::move(line));
+				}
+			}, 5000))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const Line& line : lines)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			AddAddress(entry, "addr", line.addr, allocator);
+			entry.AddMember("opcode", line.opcode, allocator);
+			entry.AddMember("opcode_hex", Str(DebugServerJson::HexU32(line.opcode), allocator), allocator);
+			entry.AddMember("text", Str(line.text, allocator), allocator);
+			if (!line.symbol.empty())
+				entry.AddMember("symbol", Str(line.symbol, allocator), allocator);
+
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("instructions", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdAssemble(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		std::vector<std::string> sources;
+		const rapidjson::Value* instructions = Member(request, "instructions");
+		if (instructions && instructions->IsString())
+		{
+			sources.emplace_back(instructions->GetString(), instructions->GetStringLength());
+		}
+		else if (instructions && instructions->IsArray())
+		{
+			for (const rapidjson::Value& item : instructions->GetArray())
+			{
+				if (!item.IsString())
+					return Error(request, "bad_args", "instructions entries must be strings");
+
+				sources.emplace_back(item.GetString(), item.GetStringLength());
+			}
+		}
+
+		if (sources.empty())
+			return Error(request, "bad_args", "instructions is required");
+
+		std::vector<u32> words(sources.size());
+		std::vector<u8> before(sources.size() * 4);
+		std::string assemble_error;
+		bool assembled = false;
+		bool written = false;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[cpu_type, addr, &sources, &words, &before, &assemble_error, &assembled, &written]() {
+					DebugInterface& cpu = DebugInterface::get(cpu_type);
+
+					// Everything is assembled before anything is written: a half-applied
+					// patch is worse than none, and a failing line must leave memory alone.
+					for (size_t i = 0; i < sources.size(); i++)
+					{
+						const u32 at = addr + static_cast<u32>(i * 4);
+						if (!MipsAssembleOpcode(sources[i].c_str(), &cpu, at, words[i], assemble_error))
+							return;
+					}
+
+					assembled = true;
+
+					if (!cpu.ReadBytes(addr, before.data(), static_cast<u32>(before.size())))
+						return;
+
+					written = cpu.WriteBytes(addr, words.data(), static_cast<u32>(words.size() * 4));
+				}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!assembled)
+			return Error(request, "bad_args", "could not assemble: " + assemble_error);
+
+		if (!written)
+			return Error(request, "bad_address", "could not write the assembled words there");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+
+		rapidjson::Value word_list(rapidjson::kArrayType);
+		for (const u32 word : words)
+			word_list.PushBack(Str(DebugServerJson::HexU32(word), allocator), allocator);
+
+		result.AddMember("words", word_list, allocator);
+		result.AddMember("before", Str(DebugServerJson::BytesToHex(before.data(), before.size()), allocator),
+			allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	// --- symbols ------------------------------------------------------------------------
+
+	std::string CmdSymLookup(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		std::string name;
+		u32 symbol_address = 0;
+		u32 size = 0;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, &name, &symbol_address, &size]() {
+				const SymbolInfo info =
+					DebugInterface::get(cpu_type).GetSymbolGuardian().SymbolOverlappingAddress(addr);
+				name = info.name;
+				symbol_address = info.address.valid() ? info.address.value : 0;
+				size = info.size;
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+		result.AddMember("found", !name.empty(), allocator);
+
+		if (!name.empty())
+		{
+			result.AddMember("name", Str(name, allocator), allocator);
+			AddAddress(result, "symbol_addr", symbol_address, allocator);
+			result.AddMember("size", size, allocator);
+			result.AddMember("offset", addr - symbol_address, allocator);
+		}
+
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdSymFind(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+		const std::string name = ArgString(request, "name");
+		if (name.empty())
+			return Error(request, "bad_args", "name is required");
+
+		u32 address = 0;
+		u32 size = 0;
+		bool found = false;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, name, &address, &size, &found]() {
+				const SymbolInfo info = DebugInterface::get(cpu_type).GetSymbolGuardian().SymbolWithName(name);
+				found = !info.name.empty() && info.address.valid();
+				address = info.address.valid() ? info.address.value : 0;
+				size = info.size;
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!found)
+			return Error(request, "bad_args", "no symbol named " + name);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("name", Str(name, allocator), allocator);
+		AddAddress(result, "addr", address, allocator);
+		result.AddMember("size", size, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	// --- context ------------------------------------------------------------------------
+
+	const char* ThreadStatusName(ThreadStatus status)
+	{
+		switch (status)
+		{
+			case ThreadStatus::THS_RUN:
+				return "run";
+			case ThreadStatus::THS_READY:
+				return "ready";
+			case ThreadStatus::THS_WAIT:
+				return "wait";
+			case ThreadStatus::THS_SUSPEND:
+				return "suspend";
+			case ThreadStatus::THS_WAIT_SUSPEND:
+				return "wait_suspend";
+			case ThreadStatus::THS_DORMANT:
+				return "dormant";
+			case ThreadStatus::THS_BAD:
+			default:
+				return "bad";
+		}
+	}
+
+	std::string CmdStack(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure) || !RequirePaused(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		std::vector<MipsStackWalk::StackFrame> frames;
+		std::vector<std::string> functions;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, &frames, &functions]() {
+				DebugInterface& cpu = DebugInterface::get(cpu_type);
+
+				for (const auto& thread : cpu.GetThreadList())
+				{
+					if (thread->Status() != ThreadStatus::THS_RUN)
+						continue;
+
+					frames = MipsStackWalk::Walk(&cpu, cpu.getPC(), cpu.getRegister(0, 31),
+						cpu.getRegister(0, 29), thread->EntryPoint());
+					break;
+				}
+
+				for (const MipsStackWalk::StackFrame& frame : frames)
+					functions.push_back(cpu.GetSymbolGuardian().FunctionOverlappingAddress(frame.pc).name);
+			}, 5000))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (size_t i = 0; i < frames.size(); i++)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			AddAddress(entry, "pc", frames[i].pc, allocator);
+			AddAddress(entry, "entry", frames[i].entry, allocator);
+			AddAddress(entry, "sp", frames[i].sp, allocator);
+			entry.AddMember("stack_size", frames[i].stackSize, allocator);
+			entry.AddMember("function", Str(functions[i], allocator), allocator);
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("frames", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdThreads(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		struct ThreadRow
+		{
+			u32 tid;
+			u32 pc;
+			u32 entry;
+			u32 priority;
+			ThreadStatus status;
+			u32 wait_id;
+		};
+
+		std::vector<ThreadRow> rows;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, &rows]() {
+				for (const auto& thread : DebugInterface::get(cpu_type).GetThreadList())
+				{
+					rows.push_back({thread->TID(), thread->PC(), thread->EntryPoint(), thread->Priority(),
+						thread->Status(), thread->WaitId()});
+				}
+			}, 5000))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const ThreadRow& row : rows)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			entry.AddMember("tid", row.tid, allocator);
+			AddAddress(entry, "pc", row.pc, allocator);
+			AddAddress(entry, "entry", row.entry, allocator);
+			entry.AddMember("priority", row.priority, allocator);
+			entry.AddMember("status", rapidjson::Value(ThreadStatusName(row.status), allocator), allocator);
+			entry.AddMember("wait_id", row.wait_id, allocator);
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("threads", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdModules(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		std::vector<IopMod> modules;
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[cpu_type, &modules]() { modules = DebugInterface::get(cpu_type).GetModuleList(); }, 5000))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const IopMod& module : modules)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			entry.AddMember("name", Str(module.name, allocator), allocator);
+			entry.AddMember("version", module.version, allocator);
+			AddAddress(entry, "entry", module.entry, allocator);
+			AddAddress(entry, "text_addr", module.text_addr, allocator);
+			entry.AddMember("text_size", module.text_size, allocator);
+			entry.AddMember("data_size", module.data_size, allocator);
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("modules", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdEval(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+		const std::string expression = ArgString(request, "expression");
+		if (expression.empty())
+			return Error(request, "bad_args", "expression is required");
+
+		u64 value = 0;
+		bool ok = false;
+		std::string parse_error;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, expression, &value, &ok, &parse_error]() {
+				ok = DebugInterface::get(cpu_type).evaluateExpression(expression.c_str(), value, parse_error);
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Error(request, "bad_args", "could not evaluate: " + parse_error);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("expression", Str(expression, allocator), allocator);
+		result.AddMember("value", value, allocator);
+		result.AddMember("value_hex", Str(fmt::format("0x{:x}", value), allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
 	std::string CmdSubscribe(const DebugServerRequest& request, DebugServerConnection& connection)
 	{
 		connection.SetSubscribed(true);
@@ -1550,6 +1988,17 @@ void DebugServerCommands::RegisterAll()
 	s_handlers["mem.write"] = CmdMemWrite;
 	s_handlers["mem.fill"] = CmdMemFill;
 	s_handlers["mem.dump"] = CmdMemDump;
+
+	s_handlers["dis"] = CmdDisassemble;
+	s_handlers["asm"] = CmdAssemble;
+
+	s_handlers["sym.lookup"] = CmdSymLookup;
+	s_handlers["sym.find"] = CmdSymFind;
+
+	s_handlers["stack"] = CmdStack;
+	s_handlers["threads"] = CmdThreads;
+	s_handlers["modules"] = CmdModules;
+	s_handlers["eval"] = CmdEval;
 }
 
 const DebugServerHandler* DebugServerCommands::Find(const std::string& name)
