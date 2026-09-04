@@ -15,8 +15,13 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <fmt/format.h>
+
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <string_view>
+#include <utility>
 #include <unordered_map>
 
 namespace
@@ -917,6 +922,551 @@ namespace
 		return DebugServerJson::MakeResult(request.id, result, result.GetAllocator());
 	}
 
+	// --- registers ----------------------------------------------------------------------
+
+	std::string ToLower(std::string_view text)
+	{
+		std::string out(text);
+		std::transform(out.begin(), out.end(), out.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return out;
+	}
+
+	std::string U128ToHex(const u128& value)
+	{
+		return fmt::format("{:016x}{:016x}", value.hi, value.lo);
+	}
+
+	// Pseudo-registers that are not in any category but are what a caller usually wants.
+	constexpr int PSEUDO_PC = -1;
+	constexpr int PSEUDO_HI = -2;
+	constexpr int PSEUDO_LO = -3;
+
+	// Accepts "a0", "$a0", "gpr:a0", "cp0:Status", and the pseudo-registers pc, hi and lo.
+	// Matching is case insensitive. Must run on the CPU thread: the register tables come
+	// from the live DebugInterface.
+	bool ResolveRegister(DebugInterface& cpu, std::string_view name, int& category, int& index)
+	{
+		std::string wanted = ToLower(name);
+		if (!wanted.empty() && wanted.front() == '$')
+			wanted.erase(0, 1);
+
+		if (wanted == "pc")
+		{
+			category = PSEUDO_PC;
+			index = 0;
+			return true;
+		}
+		if (wanted == "hi")
+		{
+			category = PSEUDO_HI;
+			index = 0;
+			return true;
+		}
+		if (wanted == "lo")
+		{
+			category = PSEUDO_LO;
+			index = 0;
+			return true;
+		}
+
+		std::string wanted_category;
+		const size_t colon = wanted.find(':');
+		if (colon != std::string::npos)
+		{
+			wanted_category = wanted.substr(0, colon);
+			wanted = wanted.substr(colon + 1);
+		}
+
+		for (int cat = 0; cat < cpu.getRegisterCategoryCount(); cat++)
+		{
+			if (!wanted_category.empty() && ToLower(cpu.getRegisterCategoryName(cat)) != wanted_category)
+				continue;
+
+			for (int num = 0; num < cpu.getRegisterCount(cat); num++)
+			{
+				if (ToLower(cpu.getRegisterName(cat, num)) != wanted)
+					continue;
+
+				category = cat;
+				index = num;
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	u128 ReadRegister(DebugInterface& cpu, int category, int index)
+	{
+		switch (category)
+		{
+			case PSEUDO_PC:
+				return u128::From32(cpu.getPC());
+			case PSEUDO_HI:
+				return cpu.getHI();
+			case PSEUDO_LO:
+				return cpu.getLO();
+			default:
+				return cpu.getRegister(category, index);
+		}
+	}
+
+	std::string CmdRegList(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		// Names are gathered into plain strings on the CPU thread; the pointers the debug
+		// interface hands back are only guaranteed valid there.
+		std::vector<std::pair<std::string, std::vector<std::string>>> categories;
+		std::vector<int> sizes;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, &categories, &sizes]() {
+				DebugInterface& cpu = DebugInterface::get(cpu_type);
+				for (int cat = 0; cat < cpu.getRegisterCategoryCount(); cat++)
+				{
+					std::vector<std::string> names;
+					for (int num = 0; num < cpu.getRegisterCount(cat); num++)
+						names.emplace_back(cpu.getRegisterName(cat, num));
+
+					categories.emplace_back(cpu.getRegisterCategoryName(cat), std::move(names));
+					sizes.push_back(cpu.getRegisterSize(cat));
+				}
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (size_t i = 0; i < categories.size(); i++)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			entry.AddMember("name", Str(categories[i].first, allocator), allocator);
+			entry.AddMember("size", sizes[i], allocator);
+
+			rapidjson::Value names(rapidjson::kArrayType);
+			for (const std::string& name : categories[i].second)
+				names.PushBack(Str(name, allocator), allocator);
+
+			entry.AddMember("registers", names, allocator);
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("categories", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdRegGet(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure) || !RequirePaused(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+		const std::string name = ArgString(request, "name");
+		if (name.empty())
+			return Error(request, "bad_args", "name is required");
+
+		bool found = false;
+		u128 value{};
+		std::string text;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, name, &found, &value, &text]() {
+				DebugInterface& cpu = DebugInterface::get(cpu_type);
+				int category = 0;
+				int index = 0;
+				if (!ResolveRegister(cpu, name, category, index))
+					return;
+
+				found = true;
+				value = ReadRegister(cpu, category, index);
+				text = (category >= 0) ? cpu.getRegisterString(category, index) : U128ToHex(value);
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!found)
+			return Error(request, "bad_args", "no such register: " + name);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("name", Str(name, allocator), allocator);
+		result.AddMember("value", Str(U128ToHex(value), allocator), allocator);
+		result.AddMember("value_u64", value.lo, allocator);
+		result.AddMember("string", Str(text, allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdRegSet(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure) || !RequirePaused(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+		const std::string name = ArgString(request, "name");
+		if (name.empty())
+			return Error(request, "bad_args", "name is required");
+
+		const rapidjson::Value* raw = Member(request, "value");
+		if (!raw)
+			return Error(request, "bad_args", "value is required");
+
+		u128 wanted{};
+		if (raw->IsUint64())
+		{
+			wanted = u128::From64(raw->GetUint64());
+		}
+		else if (raw->IsString())
+		{
+			std::string text(raw->GetString(), raw->GetStringLength());
+			if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+				text.erase(0, 2);
+
+			if (text.empty() || text.size() > 32 ||
+				!std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+			{
+				return Error(request, "bad_args", "value must be up to 32 hex digits or a number");
+			}
+
+			text.insert(text.begin(), 32 - text.size(), '0');
+			wanted.hi = std::stoull(text.substr(0, 16), nullptr, 16);
+			wanted.lo = std::stoull(text.substr(16), nullptr, 16);
+		}
+		else
+		{
+			return Error(request, "bad_args", "value must be a number or a hex string");
+		}
+
+		bool found = false;
+		u128 before{};
+		u128 after{};
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[cpu_type, name, wanted, &found, &before, &after]() {
+					DebugInterface& cpu = DebugInterface::get(cpu_type);
+					int category = 0;
+					int index = 0;
+					if (!ResolveRegister(cpu, name, category, index))
+						return;
+
+					found = true;
+					before = ReadRegister(cpu, category, index);
+
+					if (category == PSEUDO_PC)
+						cpu.setPc(static_cast<u32>(wanted.lo));
+					else if (category >= 0)
+						cpu.setRegister(category, index, wanted);
+
+					after = ReadRegister(cpu, category, index);
+				}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!found)
+			return Error(request, "bad_args", "no such register: " + name);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("name", Str(name, allocator), allocator);
+		result.AddMember("before", Str(U128ToHex(before), allocator), allocator);
+		result.AddMember("after", Str(U128ToHex(after), allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdRegDump(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure) || !RequirePaused(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+		const std::string wanted_category = ToLower(ArgString(request, "category"));
+
+		struct Entry
+		{
+			std::string category;
+			std::string name;
+			u128 value;
+			std::string text;
+		};
+
+		std::vector<Entry> entries;
+		u32 pc = 0;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, wanted_category, &entries, &pc]() {
+				DebugInterface& cpu = DebugInterface::get(cpu_type);
+				pc = cpu.getPC();
+
+				for (int cat = 0; cat < cpu.getRegisterCategoryCount(); cat++)
+				{
+					const std::string category_name = cpu.getRegisterCategoryName(cat);
+					if (!wanted_category.empty() && ToLower(category_name) != wanted_category)
+						continue;
+
+					for (int num = 0; num < cpu.getRegisterCount(cat); num++)
+					{
+						entries.push_back({category_name, cpu.getRegisterName(cat, num),
+							cpu.getRegister(cat, num), cpu.getRegisterString(cat, num)});
+					}
+				}
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (entries.empty() && !wanted_category.empty())
+			return Error(request, "bad_args", "no such register category");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "pc", pc, allocator);
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const Entry& entry : entries)
+		{
+			rapidjson::Value item(rapidjson::kObjectType);
+			item.AddMember("category", Str(entry.category, allocator), allocator);
+			item.AddMember("name", Str(entry.name, allocator), allocator);
+			item.AddMember("value", Str(U128ToHex(entry.value), allocator), allocator);
+			item.AddMember("value_u64", entry.value.lo, allocator);
+			item.AddMember("string", Str(entry.text, allocator), allocator);
+			list.PushBack(item, allocator);
+		}
+
+		result.AddMember("registers", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	// --- memory -------------------------------------------------------------------------
+
+	constexpr u32 MAX_MEMORY_TRANSFER = 16 * 1024 * 1024;
+
+	bool WantsBase64(const DebugServerRequest& request)
+	{
+		return ArgString(request, "format") == "base64";
+	}
+
+	std::string EncodeBytes(const DebugServerRequest& request, const std::vector<u8>& bytes)
+	{
+		return WantsBase64(request) ? DebugServerJson::BytesToBase64(bytes.data(), bytes.size())
+									: DebugServerJson::BytesToHex(bytes.data(), bytes.size());
+	}
+
+	std::string CmdMemRead(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		const u32 size = ArgU32(request, "size", 4);
+		if (size == 0 || size > MAX_MEMORY_TRANSFER)
+			return Error(request, "bad_args", "size must be between 1 and 16 MiB");
+
+		std::vector<u8> bytes(size);
+		bool ok = false;
+
+		// Reads are allowed while running, matching what PINE already permits and what the
+		// existing tooling relies on for sampling live counters.
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, size, &bytes, &ok]() {
+				ok = DebugInterface::get(cpu_type).ReadBytes(addr, bytes.data(), size);
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Error(request, "bad_address", "could not read " + std::to_string(size) + " bytes there");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+		result.AddMember("size", size, allocator);
+		result.AddMember("format", Str(WantsBase64(request) ? "base64" : "hex", allocator), allocator);
+		result.AddMember("data", Str(EncodeBytes(request, bytes), allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdMemWrite(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		const std::string data = ArgString(request, "data");
+		if (data.empty())
+			return Error(request, "bad_args", "data is required");
+
+		std::vector<u8> bytes;
+		const bool decoded = WantsBase64(request) ? DebugServerJson::Base64ToBytes(data, bytes)
+												  : DebugServerJson::HexToBytes(data, bytes);
+		if (!decoded || bytes.empty())
+			return Error(request, "bad_args", "data is not valid " + std::string(WantsBase64(request) ? "base64" : "hex"));
+
+		if (bytes.size() > MAX_MEMORY_TRANSFER)
+			return Error(request, "bad_args", "data exceeds 16 MiB");
+
+		std::vector<u8> before(bytes.size());
+		std::vector<u8> after(bytes.size());
+		bool ok = false;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, &bytes, &before, &after, &ok]() {
+				MemoryInterface& memory = DebugInterface::get(cpu_type);
+				const u32 size = static_cast<u32>(bytes.size());
+
+				if (!memory.ReadBytes(addr, before.data(), size))
+					return;
+				if (!memory.WriteBytes(addr, bytes.data(), size))
+					return;
+
+				ok = memory.ReadBytes(addr, after.data(), size);
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Error(request, "bad_address", "could not write there");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+		result.AddMember("size", static_cast<u32>(bytes.size()), allocator);
+		result.AddMember("before", Str(EncodeBytes(request, before), allocator), allocator);
+		result.AddMember("after", Str(EncodeBytes(request, after), allocator), allocator);
+		// A value the game rewrites every frame is otherwise indistinguishable from a
+		// successful write, which is a trap the existing tooling already warns about.
+		result.AddMember("verified", after == bytes, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdMemFill(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		const u32 size = ArgU32(request, "size", 0);
+		if (size == 0 || size > MAX_MEMORY_TRANSFER)
+			return Error(request, "bad_args", "size must be between 1 and 16 MiB");
+
+		std::vector<u8> pattern;
+		if (!DebugServerJson::HexToBytes(ArgString(request, "pattern"), pattern) || pattern.empty())
+			return Error(request, "bad_args", "pattern must be a non-empty hex byte string");
+
+		std::vector<u8> bytes(size);
+		for (u32 i = 0; i < size; i++)
+			bytes[i] = pattern[i % pattern.size()];
+
+		bool ok = false;
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, size, &bytes, &ok]() {
+				ok = DebugInterface::get(cpu_type).WriteBytes(addr, bytes.data(), size);
+			}))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Error(request, "bad_address", "could not write there");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+		result.AddMember("bytes_written", size, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdMemDump(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		u32 addr = 0;
+		std::string error;
+		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
+			return Error(request, "bad_address", error);
+
+		const u32 size = ArgU32(request, "size", 0);
+		if (size == 0)
+			return Error(request, "bad_args", "size is required");
+
+		const std::string path = ArgString(request, "path");
+		if (path.empty())
+			return Error(request, "bad_args", "path is required");
+
+		// Whole-RAM dumps are 32 MiB, far past what belongs in a JSON reply, so this writes
+		// server side and returns the path instead.
+		std::vector<u8> bytes(size);
+		bool ok = false;
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu_type, addr, size, &bytes, &ok]() {
+				ok = DebugInterface::get(cpu_type).ReadBytes(addr, bytes.data(), size);
+			}, 10000))
+		{
+			return Error(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Error(request, "bad_address", "could not read that range");
+
+		std::FILE* file = std::fopen(path.c_str(), "wb");
+		if (!file)
+			return Error(request, "io_error", "could not open " + path + " for writing");
+
+		const size_t written = std::fwrite(bytes.data(), 1, bytes.size(), file);
+		std::fclose(file);
+
+		if (written != bytes.size())
+			return Error(request, "io_error", "short write to " + path);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		AddAddress(result, "addr", addr, allocator);
+		result.AddMember("size", size, allocator);
+		result.AddMember("path", Str(path, allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
 	std::string CmdSubscribe(const DebugServerRequest& request, DebugServerConnection& connection)
 	{
 		connection.SetSubscribed(true);
@@ -990,6 +1540,16 @@ void DebugServerCommands::RegisterAll()
 	s_handlers["mc.remove"] = CmdMcRemove;
 	s_handlers["mc.list"] = CmdMcList;
 	s_handlers["mc.clear"] = CmdMcClear;
+
+	s_handlers["reg.list"] = CmdRegList;
+	s_handlers["reg.get"] = CmdRegGet;
+	s_handlers["reg.set"] = CmdRegSet;
+	s_handlers["reg.dump"] = CmdRegDump;
+
+	s_handlers["mem.read"] = CmdMemRead;
+	s_handlers["mem.write"] = CmdMemWrite;
+	s_handlers["mem.fill"] = CmdMemFill;
+	s_handlers["mem.dump"] = CmdMemDump;
 }
 
 const DebugServerHandler* DebugServerCommands::Find(const std::string& name)
