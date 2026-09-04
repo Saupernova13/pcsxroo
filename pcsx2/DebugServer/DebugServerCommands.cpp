@@ -10,6 +10,10 @@
 #include "DebugTools/MipsAssembler.h"
 #include "DebugTools/MipsStackWalk.h"
 
+#include "GS/GS.h"
+
+#include "common/Error.h"
+
 #include "BuildVersion.h"
 #include "Host.h"
 #include "VMManager.h"
@@ -245,7 +249,8 @@ namespace
 		return true;
 	}
 
-	std::string Error(const DebugServerRequest& request, const char* code, const std::string& message)
+	// Named Fail rather than Error so it does not shadow the Error type from common/Error.h.
+	std::string Fail(const DebugServerRequest& request, const char* code, const std::string& message)
 	{
 		return DebugServerJson::MakeError(request.id, code, message);
 	}
@@ -257,7 +262,7 @@ namespace
 		if (DebugServerDispatch::VMIsValid())
 			return true;
 
-		out = Error(request, "no_vm", "no virtual machine is running");
+		out = Fail(request, "no_vm", "no virtual machine is running");
 		return false;
 	}
 
@@ -266,7 +271,7 @@ namespace
 		if (DebugServerDispatch::VMIsPaused())
 			return true;
 
-		out = Error(request, "not_paused", "this command requires a paused VM");
+		out = Fail(request, "not_paused", "this command requires a paused VM");
 		return false;
 	}
 
@@ -295,7 +300,7 @@ namespace
 			return failure;
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([]() { VMManager::SetPaused(false); }))
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 
 		return SimpleResult(request);
 	}
@@ -311,11 +316,11 @@ namespace
 		const u64 since = DebuggerControl::GetLastStop().seq;
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([]() { VMManager::SetPaused(true); }))
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 
 		DebuggerControl::StopEvent stop;
 		if (!DebuggerControl::WaitForStop(since, ArgU32(request, "timeout_ms", 2000), stop))
-			return Error(request, "timeout", "the VM did not report a stop after pausing");
+			return Fail(request, "timeout", "the VM did not report a stop after pausing");
 
 		return StopResult(request, stop);
 	}
@@ -339,7 +344,7 @@ namespace
 		else if (mode_text == "out")
 			mode = DebuggerControl::StepMode::Out;
 		else
-			return Error(request, "bad_args", "mode must be one of into, over, out");
+			return Fail(request, "bad_args", "mode must be one of into, over, out");
 
 		const BreakPointCpu cpu = ArgCpu(request);
 		const u64 since = DebuggerControl::GetLastStop().seq;
@@ -348,18 +353,18 @@ namespace
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu, mode, &started]() { started = DebuggerControl::Step(cpu, mode); }))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!started)
 		{
-			return Error(request, "unsupported",
+			return Fail(request, "unsupported",
 				"could not step; for mode \"out\" there may be no caller frame to return to");
 		}
 
 		DebuggerControl::StopEvent stop;
 		if (!DebuggerControl::WaitForStop(since, ArgU32(request, "timeout_ms", 5000), stop))
-			return Error(request, "timeout", "the step did not complete");
+			return Fail(request, "timeout", "the step did not complete");
 
 		return StopResult(request, stop);
 	}
@@ -375,17 +380,17 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		bool started = false;
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu, addr, &started]() { started = DebuggerControl::RunTo(cpu, addr); }))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!started)
-			return Error(request, "unsupported", "could not resume from the current state");
+			return Fail(request, "unsupported", "could not resume from the current state");
 
 		// Deliberately does not wait: the target may never be reached, so the caller decides
 		// how long to give it by calling wait with its own timeout.
@@ -405,7 +410,7 @@ namespace
 		const u64 since = DebuggerControl::GetLastStop().seq;
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([count]() { VMManager::FrameAdvance(count); }))
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 
 		DebuggerControl::StopEvent stop;
 		DebuggerControl::WaitForStop(since, ArgU32(request, "timeout_ms", 10000), stop);
@@ -429,7 +434,7 @@ namespace
 			return failure;
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([]() { VMManager::Reset(); }, 10000))
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 
 		return SimpleResult(request);
 	}
@@ -457,7 +462,7 @@ namespace
 
 		DebuggerControl::StopEvent stop;
 		if (!DebuggerControl::WaitForStop(since, timeout_ms, stop))
-			return Error(request, "timeout", "no stop occurred within the timeout");
+			return Fail(request, "timeout", "no stop occurred within the timeout");
 
 		return StopResult(request, stop);
 	}
@@ -500,7 +505,7 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const bool enabled = ArgBool(request, "enabled", true);
 		const bool temporary = ArgBool(request, "temporary", false);
@@ -529,10 +534,10 @@ namespace
 			});
 
 		if (!dispatched)
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 
 		if (!condition_ok)
-			return Error(request, "bad_args", "condition did not parse: " + condition_error);
+			return Fail(request, "bad_args", "condition did not parse: " + condition_error);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -551,7 +556,7 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		bool removed = false;
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([cpu, addr, &removed]() {
@@ -560,7 +565,7 @@ namespace
 					CBreakPoints::RemoveBreakPoint(cpu, addr);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		// Removing an address with no breakpoint is not an error: a cleanup script should be
@@ -586,7 +591,7 @@ namespace
 				breakpoints = CBreakPoints::GetBreakpoints(cpu, include_temp);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -623,12 +628,12 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu, addr, enable]() { CBreakPoints::ChangeBreakPoint(cpu, addr, enable); }))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -667,7 +672,7 @@ namespace
 				removed = existing.size();
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -748,16 +753,16 @@ namespace
 		u32 end = 0;
 		std::string error;
 		if (!ResolveAddress(request, "start", cpu, start, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 		if (!ResolveAddress(request, "end", cpu, end, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		if (end <= start)
-			return Error(request, "bad_args", "end must be greater than start");
+			return Fail(request, "bad_args", "end must be greater than start");
 
 		MemCheckCondition condition;
 		if (!ParseMemCheckCondition(request, condition, error))
-			return Error(request, "bad_args", error);
+			return Fail(request, "bad_args", error);
 
 		const MemCheckResult result_flags = ParseMemCheckResult(request);
 		const std::string cond_text = ArgString(request, "condition");
@@ -784,11 +789,11 @@ namespace
 					CBreakPoints::ChangeMemCheckDescription(cpu, start, end, description);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!condition_ok)
-			return Error(request, "bad_args", "condition did not parse: " + condition_error);
+			return Fail(request, "bad_args", "condition did not parse: " + condition_error);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -823,14 +828,14 @@ namespace
 		u32 end = 0;
 		std::string error;
 		if (!ResolveAddress(request, "start", cpu, start, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 		if (!ResolveAddress(request, "end", cpu, end, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu, start, end]() { CBreakPoints::RemoveMemCheck(cpu, start, end); }))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -852,7 +857,7 @@ namespace
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu, &checks]() { checks = CBreakPoints::GetMemChecks(cpu); }))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -915,7 +920,7 @@ namespace
 				removed = existing.size();
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1040,7 +1045,7 @@ namespace
 				}
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1075,7 +1080,7 @@ namespace
 		const BreakPointCpu cpu_type = ArgCpu(request);
 		const std::string name = ArgString(request, "name");
 		if (name.empty())
-			return Error(request, "bad_args", "name is required");
+			return Fail(request, "bad_args", "name is required");
 
 		bool found = false;
 		u128 value{};
@@ -1093,11 +1098,11 @@ namespace
 				text = (category >= 0) ? cpu.getRegisterString(category, index) : U128ToHex(value);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!found)
-			return Error(request, "bad_args", "no such register: " + name);
+			return Fail(request, "bad_args", "no such register: " + name);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1118,11 +1123,11 @@ namespace
 		const BreakPointCpu cpu_type = ArgCpu(request);
 		const std::string name = ArgString(request, "name");
 		if (name.empty())
-			return Error(request, "bad_args", "name is required");
+			return Fail(request, "bad_args", "name is required");
 
 		const rapidjson::Value* raw = Member(request, "value");
 		if (!raw)
-			return Error(request, "bad_args", "value is required");
+			return Fail(request, "bad_args", "value is required");
 
 		u128 wanted{};
 		if (raw->IsUint64())
@@ -1138,7 +1143,7 @@ namespace
 			if (text.empty() || text.size() > 32 ||
 				!std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
 			{
-				return Error(request, "bad_args", "value must be up to 32 hex digits or a number");
+				return Fail(request, "bad_args", "value must be up to 32 hex digits or a number");
 			}
 
 			text.insert(text.begin(), 32 - text.size(), '0');
@@ -1147,7 +1152,7 @@ namespace
 		}
 		else
 		{
-			return Error(request, "bad_args", "value must be a number or a hex string");
+			return Fail(request, "bad_args", "value must be a number or a hex string");
 		}
 
 		bool found = false;
@@ -1173,11 +1178,11 @@ namespace
 					after = ReadRegister(cpu, category, index);
 				}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!found)
-			return Error(request, "bad_args", "no such register: " + name);
+			return Fail(request, "bad_args", "no such register: " + name);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1226,11 +1231,11 @@ namespace
 				}
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (entries.empty() && !wanted_category.empty())
-			return Error(request, "bad_args", "no such register category");
+			return Fail(request, "bad_args", "no such register category");
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1279,11 +1284,11 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const u32 size = ArgU32(request, "size", 4);
 		if (size == 0 || size > MAX_MEMORY_TRANSFER)
-			return Error(request, "bad_args", "size must be between 1 and 16 MiB");
+			return Fail(request, "bad_args", "size must be between 1 and 16 MiB");
 
 		std::vector<u8> bytes(size);
 		bool ok = false;
@@ -1294,11 +1299,11 @@ namespace
 				ok = DebugInterface::get(cpu_type).ReadBytes(addr, bytes.data(), size);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!ok)
-			return Error(request, "bad_address", "could not read " + std::to_string(size) + " bytes there");
+			return Fail(request, "bad_address", "could not read " + std::to_string(size) + " bytes there");
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1321,20 +1326,20 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const std::string data = ArgString(request, "data");
 		if (data.empty())
-			return Error(request, "bad_args", "data is required");
+			return Fail(request, "bad_args", "data is required");
 
 		std::vector<u8> bytes;
 		const bool decoded = WantsBase64(request) ? DebugServerJson::Base64ToBytes(data, bytes)
 												  : DebugServerJson::HexToBytes(data, bytes);
 		if (!decoded || bytes.empty())
-			return Error(request, "bad_args", "data is not valid " + std::string(WantsBase64(request) ? "base64" : "hex"));
+			return Fail(request, "bad_args", "data is not valid " + std::string(WantsBase64(request) ? "base64" : "hex"));
 
 		if (bytes.size() > MAX_MEMORY_TRANSFER)
-			return Error(request, "bad_args", "data exceeds 16 MiB");
+			return Fail(request, "bad_args", "data exceeds 16 MiB");
 
 		std::vector<u8> before(bytes.size());
 		std::vector<u8> after(bytes.size());
@@ -1352,11 +1357,11 @@ namespace
 				ok = memory.ReadBytes(addr, after.data(), size);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!ok)
-			return Error(request, "bad_address", "could not write there");
+			return Fail(request, "bad_address", "could not write there");
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1382,15 +1387,15 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const u32 size = ArgU32(request, "size", 0);
 		if (size == 0 || size > MAX_MEMORY_TRANSFER)
-			return Error(request, "bad_args", "size must be between 1 and 16 MiB");
+			return Fail(request, "bad_args", "size must be between 1 and 16 MiB");
 
 		std::vector<u8> pattern;
 		if (!DebugServerJson::HexToBytes(ArgString(request, "pattern"), pattern) || pattern.empty())
-			return Error(request, "bad_args", "pattern must be a non-empty hex byte string");
+			return Fail(request, "bad_args", "pattern must be a non-empty hex byte string");
 
 		std::vector<u8> bytes(size);
 		for (u32 i = 0; i < size; i++)
@@ -1401,11 +1406,11 @@ namespace
 				ok = DebugInterface::get(cpu_type).WriteBytes(addr, bytes.data(), size);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!ok)
-			return Error(request, "bad_address", "could not write there");
+			return Fail(request, "bad_address", "could not write there");
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1426,15 +1431,15 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const u32 size = ArgU32(request, "size", 0);
 		if (size == 0)
-			return Error(request, "bad_args", "size is required");
+			return Fail(request, "bad_args", "size is required");
 
 		const std::string path = ArgString(request, "path");
 		if (path.empty())
-			return Error(request, "bad_args", "path is required");
+			return Fail(request, "bad_args", "path is required");
 
 		// Whole-RAM dumps are 32 MiB, far past what belongs in a JSON reply, so this writes
 		// server side and returns the path instead.
@@ -1444,21 +1449,21 @@ namespace
 				ok = DebugInterface::get(cpu_type).ReadBytes(addr, bytes.data(), size);
 			}, 10000))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!ok)
-			return Error(request, "bad_address", "could not read that range");
+			return Fail(request, "bad_address", "could not read that range");
 
 		std::FILE* file = std::fopen(path.c_str(), "wb");
 		if (!file)
-			return Error(request, "io_error", "could not open " + path + " for writing");
+			return Fail(request, "io_error", "could not open " + path + " for writing");
 
 		const size_t written = std::fwrite(bytes.data(), 1, bytes.size(), file);
 		std::fclose(file);
 
 		if (written != bytes.size())
-			return Error(request, "io_error", "short write to " + path);
+			return Fail(request, "io_error", "short write to " + path);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1482,7 +1487,7 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		const u32 count = std::clamp(ArgU32(request, "count", 16), 1u, 1024u);
 		const bool simplify = ArgBool(request, "simplify", true);
@@ -1515,7 +1520,7 @@ namespace
 				}
 			}, 5000))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1551,7 +1556,7 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		std::vector<std::string> sources;
 		const rapidjson::Value* instructions = Member(request, "instructions");
@@ -1564,14 +1569,14 @@ namespace
 			for (const rapidjson::Value& item : instructions->GetArray())
 			{
 				if (!item.IsString())
-					return Error(request, "bad_args", "instructions entries must be strings");
+					return Fail(request, "bad_args", "instructions entries must be strings");
 
 				sources.emplace_back(item.GetString(), item.GetStringLength());
 			}
 		}
 
 		if (sources.empty())
-			return Error(request, "bad_args", "instructions is required");
+			return Fail(request, "bad_args", "instructions is required");
 
 		std::vector<u32> words(sources.size());
 		std::vector<u8> before(sources.size() * 4);
@@ -1600,14 +1605,14 @@ namespace
 					written = cpu.WriteBytes(addr, words.data(), static_cast<u32>(words.size() * 4));
 				}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!assembled)
-			return Error(request, "bad_args", "could not assemble: " + assemble_error);
+			return Fail(request, "bad_args", "could not assemble: " + assemble_error);
 
 		if (!written)
-			return Error(request, "bad_address", "could not write the assembled words there");
+			return Fail(request, "bad_address", "could not write the assembled words there");
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1637,7 +1642,7 @@ namespace
 		u32 addr = 0;
 		std::string error;
 		if (!ResolveAddress(request, "addr", cpu_type, addr, error))
-			return Error(request, "bad_address", error);
+			return Fail(request, "bad_address", error);
 
 		std::string name;
 		u32 symbol_address = 0;
@@ -1651,7 +1656,7 @@ namespace
 				size = info.size;
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1680,7 +1685,7 @@ namespace
 		const BreakPointCpu cpu_type = ArgCpu(request);
 		const std::string name = ArgString(request, "name");
 		if (name.empty())
-			return Error(request, "bad_args", "name is required");
+			return Fail(request, "bad_args", "name is required");
 
 		u32 address = 0;
 		u32 size = 0;
@@ -1693,11 +1698,11 @@ namespace
 				size = info.size;
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!found)
-			return Error(request, "bad_args", "no symbol named " + name);
+			return Fail(request, "bad_args", "no symbol named " + name);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1760,7 +1765,7 @@ namespace
 					functions.push_back(cpu.GetSymbolGuardian().FunctionOverlappingAddress(frame.pc).name);
 			}, 5000))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1811,7 +1816,7 @@ namespace
 				}
 			}, 5000))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1847,7 +1852,7 @@ namespace
 		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
 				[cpu_type, &modules]() { modules = DebugInterface::get(cpu_type).GetModuleList(); }, 5000))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		rapidjson::Document result;
@@ -1880,7 +1885,7 @@ namespace
 		const BreakPointCpu cpu_type = ArgCpu(request);
 		const std::string expression = ArgString(request, "expression");
 		if (expression.empty())
-			return Error(request, "bad_args", "expression is required");
+			return Fail(request, "bad_args", "expression is required");
 
 		u64 value = 0;
 		bool ok = false;
@@ -1890,11 +1895,11 @@ namespace
 				ok = DebugInterface::get(cpu_type).evaluateExpression(expression.c_str(), value, parse_error);
 			}))
 		{
-			return Error(request, "timeout", "the CPU thread did not respond");
+			return Fail(request, "timeout", "the CPU thread did not respond");
 		}
 
 		if (!ok)
-			return Error(request, "bad_args", "could not evaluate: " + parse_error);
+			return Fail(request, "bad_args", "could not evaluate: " + parse_error);
 
 		rapidjson::Document result;
 		result.SetObject();
@@ -1903,6 +1908,161 @@ namespace
 		result.AddMember("value", value, allocator);
 		result.AddMember("value_hex", Str(fmt::format("0x{:x}", value), allocator), allocator);
 		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	// --- session state and observation --------------------------------------------------
+
+	// Exactly one of slot or path, so an ambiguous request fails loudly instead of
+	// silently picking one.
+	bool ArgSlotOrPath(const DebugServerRequest& request, s32& slot, std::string& path, std::string& error)
+	{
+		const rapidjson::Value* slot_value = Member(request, "slot");
+		path = ArgString(request, "path");
+
+		const bool has_slot = slot_value && slot_value->IsInt();
+		if (has_slot == !path.empty())
+		{
+			error = "pass exactly one of slot or path";
+			return false;
+		}
+
+		if (has_slot)
+		{
+			slot = slot_value->GetInt();
+			if (slot < 0 || slot > 9)
+			{
+				error = "slot must be between 0 and 9";
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	std::string CmdSaveState(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		s32 slot = 0;
+		std::string path;
+		std::string error;
+		if (!ArgSlotOrPath(request, slot, path, error))
+			return Fail(request, "bad_args", error);
+
+		const bool wait_flush = ArgBool(request, "wait_flush", false);
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([slot, path, wait_flush]() {
+				if (path.empty())
+					VMManager::SaveStateToSlot(slot, true, nullptr);
+				else
+					VMManager::SaveState(path.c_str(), true, false, nullptr);
+
+				// Saving compresses on a worker thread, so without this the file is not on
+				// disk when the reply arrives. Opt-in, because it can take a moment.
+				if (wait_flush)
+					VMManager::WaitForSaveStateFlush();
+			}, wait_flush ? 30000 : 5000))
+		{
+			return Fail(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("queued", true, allocator);
+		result.AddMember("flushed", wait_flush, allocator);
+		if (path.empty())
+			result.AddMember("slot", slot, allocator);
+		else
+			result.AddMember("path", Str(path, allocator), allocator);
+
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdLoadState(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		s32 slot = 0;
+		std::string path;
+		std::string error;
+		if (!ArgSlotOrPath(request, slot, path, error))
+			return Fail(request, "bad_args", error);
+
+		bool loaded = false;
+		std::string load_error;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([slot, path, &loaded, &load_error]() {
+				Error err;
+				loaded = path.empty() ? VMManager::LoadStateFromSlot(slot, false, &err)
+									  : VMManager::LoadState(path.c_str(), &err);
+				if (!loaded)
+					load_error = err.GetDescription();
+			}, 30000))
+		{
+			return Fail(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!loaded)
+			return Fail(request, "io_error", load_error.empty() ? "could not load the state" : load_error);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("loaded", true, allocator);
+		if (path.empty())
+			result.AddMember("slot", slot, allocator);
+		else
+			result.AddMember("path", Str(path, allocator), allocator);
+
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdScreenshot(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const std::string path = ArgString(request, "path");
+		if (path.empty())
+			return Fail(request, "bad_args", "path is required");
+
+		// This is what lets an agent observe the game without the window: a visual change is
+		// often the only evidence that a patch did what was intended.
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([path]() { GSQueueSnapshot(path, 0); }))
+			return Fail(request, "timeout", "the CPU thread did not respond");
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		// The snapshot lands asynchronously on the GS thread, so the file may not exist yet.
+		result.AddMember("queued", true, allocator);
+		result.AddMember("path", Str(path, allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdPatchReload(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		// A freshly deployed pnach is only read at boot otherwise.
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[]() { VMManager::ReloadPatches(true, true, true, false); }, 10000))
+		{
+			return Fail(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		result.AddMember("reloaded", true, result.GetAllocator());
+		return DebugServerJson::MakeResult(request.id, result, result.GetAllocator());
 	}
 
 	std::string CmdSubscribe(const DebugServerRequest& request, DebugServerConnection& connection)
@@ -1999,6 +2159,11 @@ void DebugServerCommands::RegisterAll()
 	s_handlers["threads"] = CmdThreads;
 	s_handlers["modules"] = CmdModules;
 	s_handlers["eval"] = CmdEval;
+
+	s_handlers["savestate"] = CmdSaveState;
+	s_handlers["loadstate"] = CmdLoadState;
+	s_handlers["screenshot"] = CmdScreenshot;
+	s_handlers["patch.reload"] = CmdPatchReload;
 }
 
 const DebugServerHandler* DebugServerCommands::Find(const std::string& name)
