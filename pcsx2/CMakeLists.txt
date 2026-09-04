@@ -811,6 +811,7 @@ set(pcsx2DebugToolsSources
 	DebugTools/MipsAssemblerTables.cpp
 	DebugTools/MipsStackWalk.cpp
 	DebugTools/Breakpoints.cpp
+	DebugTools/DebuggerControl.cpp
 	DebugTools/SymbolGuardian.cpp
 	DebugTools/SymbolImporter.cpp
 	DebugTools/DisR3000A.cpp
@@ -822,6 +823,7 @@ set(pcsx2DebugToolsSources
 # DebugTools headers
 set(pcsx2DebugToolsHeaders
 	DebugTools/DebugInterface.h
+	DebugTools/DebuggerControl.h
 	DebugTools/DisassemblyManager.h
 	DebugTools/ExpressionParser.h
 	DebugTools/MIPSAnalyst.h
