@@ -801,6 +801,15 @@ else()
 	list(APPEND pcsx2SPU2Sources ${pcsx2SPU2SourcesUnshared})
 endif()
 
+# DebugServer sources
+set(pcsx2DebugServerSources
+	DebugServer/DebugServerJson.cpp)
+
+# DebugServer headers
+set(pcsx2DebugServerHeaders
+	DebugServer/DebugServer.h
+	DebugServer/DebugServerJson.h)
+
 # DebugTools sources
 set(pcsx2DebugToolsSources
 	DebugTools/DebugInterface.cpp
@@ -1105,6 +1114,8 @@ target_sources(PCSX2 PRIVATE
 	${pcsx2RecordingSources}
 	${pcsx2DebugToolsSources}
 	${pcsx2DebugToolsHeaders}
+	${pcsx2DebugServerSources}
+	${pcsx2DebugServerHeaders}
 	${pcsx2HostSources}
 	${pcsx2HostHeaders}
 	${pcsx2ImGuiSources}

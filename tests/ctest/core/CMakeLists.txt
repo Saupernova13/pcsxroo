@@ -1,4 +1,5 @@
 add_pcsx2_test(core_test
+	debug_server_json_tests.cpp
 	debugger_control_tests.cpp
 	patch_tests.cpp
 	MockMemoryInterface.h

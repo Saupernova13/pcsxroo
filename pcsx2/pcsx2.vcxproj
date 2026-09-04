@@ -356,6 +356,7 @@
     <ClCompile Include="IopGte.cpp" />
     <ClCompile Include="LayeredSettingsInterface.cpp" />
     <ClCompile Include="PINE.cpp" />
+    <ClCompile Include="DebugServer\DebugServerJson.cpp" />
     <ClCompile Include="FW.cpp" />
     <ClCompile Include="PerformanceMetrics.cpp" />
     <ClCompile Include="Recording\InputRecording.cpp" />
@@ -804,6 +805,8 @@
     <ClInclude Include="IPU\mpeg2_vlc.h" />
     <ClInclude Include="LayeredSettingsInterface.h" />
     <ClInclude Include="PINE.h" />
+    <ClInclude Include="DebugServer\DebugServerJson.h" />
+    <ClInclude Include="DebugServer\DebugServer.h" />
     <ClInclude Include="FW.h" />
     <ClInclude Include="PerformanceMetrics.h" />
     <ClInclude Include="Recording\InputRecording.h" />

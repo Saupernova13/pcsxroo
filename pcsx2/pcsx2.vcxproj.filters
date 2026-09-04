@@ -103,6 +103,9 @@
     <Filter Include="System\Ps2\Debug\rdebug">
       <UniqueIdentifier>{bba4d866-e26f-49c8-83fb-fb970c33798b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="System\Ps2\DebugServer">
+      <UniqueIdentifier>{7f2c1a94-6d3e-4b58-9c07-2ae51d8f4b60}</UniqueIdentifier>
+    </Filter>
     <Filter Include="System\Ps2\Include">
       <UniqueIdentifier>{96937113-fef0-4e63-92e5-a30edcc78dc2}</UniqueIdentifier>
     </Filter>
@@ -811,6 +814,9 @@
     </ClCompile>
     <ClCompile Include="PINE.cpp">
       <Filter>System</Filter>
+    </ClCompile>
+    <ClCompile Include="DebugServer\DebugServerJson.cpp">
+      <Filter>System\Ps2\DebugServer</Filter>
     </ClCompile>
     <ClCompile Include="FW.cpp">
       <Filter>System\Ps2\Iop\FW</Filter>
@@ -1717,6 +1723,12 @@
     </ClInclude>
     <ClInclude Include="PINE.h">
       <Filter>System\Include</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugServer\DebugServerJson.h">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugServer\DebugServer.h">
+      <Filter>System\Ps2\DebugServer</Filter>
     </ClInclude>
     <ClInclude Include="FW.h">
       <Filter>System\Ps2\Iop\FW</Filter>
