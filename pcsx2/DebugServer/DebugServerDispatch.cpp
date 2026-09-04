@@ -7,22 +7,44 @@
 #include "VMManager.h"
 
 #include <chrono>
-#include <future>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+
+namespace
+{
+	// Shared between the caller and the queued task so that it outlives either. The task
+	// never touches the caller's stack directly; it only ever signals through this.
+	struct DispatchState
+	{
+		std::mutex mutex;
+		std::condition_variable cv;
+		bool finished = false;
+	};
+} // namespace
 
 bool DebugServerDispatch::RunOnCPUThreadWithTimeout(std::function<void()> fn, u32 timeout_ms)
 {
-	// Shared rather than captured by reference: if the wait times out, this function
-	// returns and its stack goes away, but the queued lambda may still run afterwards.
-	auto promise = std::make_shared<std::promise<void>>();
-	std::future<void> future = promise->get_future();
+	auto state = std::make_shared<DispatchState>();
 
-	Host::RunOnCPUThread([fn = std::move(fn), promise]() {
+	Host::RunOnCPUThread([fn = std::move(fn), state]() {
 		fn();
-		promise->set_value();
+
+		{
+			std::lock_guard lock(state->mutex);
+			state->finished = true;
+		}
+
+		state->cv.notify_all();
 	});
 
-	return future.wait_for(std::chrono::milliseconds(timeout_ms)) == std::future_status::ready;
+	// The lock is taken only to wait on the condition variable, never across fn itself.
+	// An earlier version held it for the whole of fn so that a timed-out caller could know
+	// fn had stopped - but that made the caller block on the mutex before it could even
+	// start its bounded wait, so a hung fn hung the client forever instead of timing out.
+	std::unique_lock lock(state->mutex);
+	return state->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+		[&state] { return state->finished; });
 }
 
 bool DebugServerDispatch::VMIsValid()

@@ -8,7 +8,7 @@ rem
 rem The repository root is derived from this script's location, so the file can be moved
 rem or the repository cloned anywhere without editing paths.
 
-setlocal
+setlocal enabledelayedexpansion
 
 for %%I in ("%~dp0..\..") do set "REPO=%%~fI"
 
@@ -40,13 +40,20 @@ set "PATH=%REPO%\deps\bin;%REPO%\3rdparty\winpixeventruntime\bin;%PATH%"
 
 cd /d "%REPO%" || exit /b 1
 
+rem Read below with !VAR! rather than %VAR%: a parenthesised block is parsed in one go, so
+rem %VAR% inside it expands before the block runs, which silently passes an empty
+rem -DCMAKE_BUILD_TYPE= and leaves CMake on its own default.
+if not defined PCSXROO_BUILD_TYPE set "PCSXROO_BUILD_TYPE=Release"
+
 if not exist "%REPO%\build\CMakeCache.txt" (
   echo === Configuring ===
-  rem Devel keeps pxAssert and the debug checks live, which matters for debugger work,
-  rem while staying fast enough to run games at full speed.
+  rem Release, not Devel. A Devel build asserts its way to a __fastfail (0xC0000409)
+  rem during VM boot, right after the game database loads and before the GS opens, so it
+  rem can never actually run a game - which makes it useless for debugging one. Set
+  rem PCSXROO_BUILD_TYPE=Devel to opt back in for core work that does not need to boot.
   "%CMAKE%" -B build -G Ninja ^
     -DCMAKE_MAKE_PROGRAM="%NINJA%" ^
-    -DCMAKE_BUILD_TYPE=Devel ^
+    -DCMAKE_BUILD_TYPE=!PCSXROO_BUILD_TYPE! ^
     -DQT_BUILD=ON ^
     -DCMAKE_PREFIX_PATH="%REPO%\deps" ^
     -DDISABLE_ADVANCE_SIMD=ON || exit /b 1

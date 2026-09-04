@@ -1,32 +1,32 @@
 # Seed a PCSXROO portable data directory from an existing PCSX2 installation.
 #
 # PCSXROO runs in portable mode: a portable.ini beside the executable makes the install
-# directory its data directory, so it never reads or writes the settings of the PCSX2
-# installation you actually use. That isolation costs a one-time setup - without a BIOS the
-# emulator opens its first-run wizard and blocks before the debug server ever starts.
+# directory its data directory. That keeps it out of the settings of the PCSX2 you actually
+# use, at the cost of a one-time copy - and without a BIOS it stops at its first-run wizard
+# before the debug server ever starts.
 #
-# This copies BIOS images, memory cards and settings across, then sanitises the copied
-# settings. It is strictly read-only with respect to -From: nothing is ever written back to
-# the source installation.
+# The aim is that everything you already configured keeps working: BIOS, controller
+# bindings and hotkeys, per-game settings, cheats, patches, texture packs, memory cards,
+# game list paths, graphics and audio settings. Only four things are changed, each because
+# it breaks an unattended session or copies something private - see "sanitise" below.
 #
 #   .\seed-portable.ps1
 #   .\seed-portable.ps1 -From "D:\emu\PCSX2" -To "bin"
-#   .\seed-portable.ps1 -Force        # overwrite files already present at the destination
+#   .\seed-portable.ps1 -Force            # overwrite files already at the destination
+#   .\seed-portable.ps1 -IncludeStates    # also copy save states (can be several GB)
 
 [CmdletBinding()]
 param(
     [string] $From,
     [string] $To,
-    [switch] $Force
+    [switch] $Force,
+    [switch] $IncludeStates
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-
-if (-not $To) {
-    $To = Join-Path $repo 'bin'
-}
+if (-not $To) { $To = Join-Path $repo 'bin' }
 
 if (-not $From) {
     # Resolved at runtime rather than hardcoded, so this works on any machine.
@@ -39,72 +39,83 @@ if (-not $From) {
 }
 
 if (-not (Test-Path $To)) {
-    Write-Host "ERROR: destination '$To' does not exist. Build PCSXROO first (tools\pcsxroo\build.cmd)."
+    Write-Host "ERROR: destination '$To' does not exist. Run tools\pcsxroo\build.cmd first."
     exit 1
 }
 
-# portable.ini is what switches PCSX2 to keeping its data beside the executable. Created
-# even when there is nothing to seed, since that is what keeps PCSXROO out of the real
-# installation's settings.
 $portable = Join-Path $To 'portable.ini'
 if (-not (Test-Path $portable)) {
     New-Item -ItemType File -Path $portable | Out-Null
     Write-Host "created $portable"
-} else {
-    Write-Host "portable.ini already present"
 }
 
 if (-not $From -or -not (Test-Path $From)) {
-    Write-Host "No PCSX2 installation found to seed from; pass -From to seed BIOS and settings."
-    Write-Host "PCSXROO will start with an empty data directory and open its setup wizard."
+    Write-Host "No PCSX2 installation found to seed from; pass -From to copy BIOS and settings."
     exit 0
 }
 
 Write-Host "seeding from $From"
 Write-Host "           to $To"
+Write-Host ''
+
+# Everything worth carrying over. cache/ and logs/ are rebuilt, snaps/ and videos/ are
+# output, and sstates/ is opt-in because save states run to gigabytes.
+$directories = @(
+    @{ name = 'bios';          why = 'BIOS images' },
+    @{ name = 'memcards';      why = 'memory cards' },
+    @{ name = 'inis';          why = 'settings, controller bindings and hotkeys' },
+    @{ name = 'gamesettings';  why = 'per-game settings' },
+    @{ name = 'inputprofiles'; why = 'input profiles' },
+    @{ name = 'cheats';        why = 'cheats and pnach patches' },
+    @{ name = 'patches';       why = 'patch files' },
+    @{ name = 'textures';      why = 'texture replacement packs' },
+    @{ name = 'covers';        why = 'game list covers' }
+)
+
+if ($IncludeStates) {
+    $directories += @{ name = 'sstates'; why = 'save states' }
+}
 
 $copied = 0
 $skipped = 0
 
-foreach ($dir in @('bios', 'memcards', 'inis')) {
-    $sourceDir = Join-Path $From $dir
-    if (-not (Test-Path $sourceDir)) {
-        Write-Host "  $dir : not present in source, skipped"
+foreach ($entry in $directories) {
+    $sourceDir = Join-Path $From $entry.name
+    if (-not (Test-Path $sourceDir)) { continue }
+
+    $files = Get-ChildItem $sourceDir -File -Recurse -ErrorAction SilentlyContinue
+    if (-not $files) {
+        Write-Host ("  {0,-14} empty, skipped" -f $entry.name)
         continue
     }
 
-    $destDir = Join-Path $To $dir
-    if (-not (Test-Path $destDir)) {
-        New-Item -ItemType Directory -Path $destDir | Out-Null
-    }
+    $dirCopied = 0
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($sourceDir.Length).TrimStart('\')
+        $dest = Join-Path (Join-Path $To $entry.name) $relative
+        $destDir = Split-Path -Parent $dest
 
-    foreach ($file in Get-ChildItem $sourceDir -File) {
-        $dest = Join-Path $destDir $file.Name
-        if ((Test-Path $dest) -and -not $Force) {
-            $skipped++
-            continue
-        }
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+        if ((Test-Path $dest) -and -not $Force) { $skipped++; continue }
 
         Copy-Item $file.FullName $dest -Force
         $copied++
+        $dirCopied++
     }
 
-    Write-Host "  $dir : done"
+    Write-Host ("  {0,-14} {1,5} file(s)  {2}" -f $entry.name, $dirCopied, $entry.why)
 }
 
+Write-Host ''
 Write-Host "copied $copied file(s), skipped $skipped already present (use -Force to overwrite)"
 
-# --- sanitise the copied settings -------------------------------------------------------
+# --- sanitise ---------------------------------------------------------------------------
 #
-# A settings file copied from a working installation carries things that are wrong, unsafe,
-# or actively fatal for an unattended PCSXROO. Each rule below is here because it stopped
-# the emulator from reaching the debug server, or because it copies something private.
+# Four changes, and only four. Everything else you configured is left exactly as it was.
 
 $ini = Join-Path $To 'inis\PCSX2.ini'
-if (-not (Test-Path $ini)) {
-    Write-Host "no PCSX2.ini to sanitise"
-    exit 0
-}
+if (-not (Test-Path $ini)) { exit 0 }
 
 $lines = Get-Content $ini
 $out = @()
@@ -116,56 +127,46 @@ foreach ($line in $lines) {
     if ($line -match '^\[(.+)\]$') {
         $section = $Matches[1]
         $out += $line
-
         continue
     }
 
-    # The source install's RetroAchievements login travels with the file. Never copy a
-    # credential into a second location just because it was convenient.
+    # 1. The source install's RetroAchievements login travels with the file. A credential
+    #    should not be copied to a second location just because it was convenient.
     if ($section -eq 'Achievements' -and $line -match '^(Username|Token|LoginToken) = ') {
-        $notes += 'removed RetroAchievements credentials'
+        $notes += 'removed the copied RetroAchievements credentials'
         continue
     }
 
-    # Achievements log in over the network during CPU thread startup, before the debug
-    # server exists, and hardcore mode would refuse the debug server outright.
-    if ($section -eq 'Achievements' -and $line -match '^Enabled = true') {
-        $notes += 'disabled achievements'
-        $out += 'Enabled = false'
+    # 2. Hardcore mode disables the debug server outright - it is the same rule that already
+    #    disables PINE - so an agent session could never attach. Achievements themselves stay
+    #    on if you had them on.
+    if ($section -eq 'Achievements' -and $line -match '^ChallengeMode = true') {
+        $notes += 'turned off achievements hardcore mode (it disables the debug server)'
+        $out += 'ChallengeMode = false'
         continue
     }
 
-    # A recursive scan of the source install's ROM directory runs at startup and is the
-    # slowest thing PCSXROO would ever do for no benefit: it boots by explicit path.
-    if ($section -eq 'GameList') {
-        if ($line.Trim() -ne '') { $notes += 'cleared the game list search paths' }
-        continue
-    }
-
-    # Directory overrides point back at the installation we copied from, so PCSXROO would
-    # read its BIOS from there - or, when the relative path does not resolve, from nowhere.
+    # 3. Directory overrides point back at the installation we just copied from, so PCSXROO
+    #    would read the BIOS and write memory cards over there instead of using its own.
     if ($section -eq 'Folders' -and $line -match '^\w+ = ') {
-        $notes += 'cleared directory overrides so PCSXROO uses its own folders'
+        $notes += 'cleared directory overrides so PCSXROO uses its own copied folders'
         continue
     }
 
-    # Starting fullscreen makes an unattended session fight for the display.
+    # 4. Starting fullscreen makes an unattended session take over the display.
     if ($section -eq 'UI' -and $line -match '^StartFullscreen = true') {
-        $notes += 'disabled start-fullscreen'
+        $notes += 'turned off start-fullscreen'
         $out += 'StartFullscreen = false'
         continue
     }
 
-    if ($section -eq 'UI' -and $line -match '^Language = ') {
-        $sawLanguage = $true
-    }
+    if ($section -eq 'UI' -and $line -match '^Language = ') { $sawLanguage = $true }
 
     $out += $line
 }
 
-# A Devel build shows a modal "Translation Error" box for any system locale with no
-# shipped .qm file, and that box blocks startup. PCSXROO downgrades it to a warning, but
-# pinning a language that definitely exists avoids the noise entirely.
+# PCSXROO downgrades PCSX2's "Translation Error" dialog to a warning, but pinning a language
+# that definitely ships avoids the noise for locales with no .qm file at all.
 if (-not $sawLanguage) {
     $final = @()
     foreach ($line in $out) {
@@ -177,12 +178,33 @@ if (-not $sawLanguage) {
     $notes += 'pinned Language to en-US'
 }
 
-# Written without a BOM: PCSX2's ini parser expects a plain text file.
+# Written without a BOM: PCSX2's ini parser expects plain text.
 [System.IO.File]::WriteAllLines($ini, $out)
 
 if ($notes.Count -gt 0) {
-    Write-Host 'sanitised the copied settings:'
-    foreach ($note in ($notes | Select-Object -Unique)) {
-        Write-Host "  - $note"
+    Write-Host ''
+    Write-Host 'changed in the copied settings:'
+    foreach ($note in ($notes | Select-Object -Unique)) { Write-Host "  - $note" }
+    Write-Host ''
+    Write-Host 'everything else - controls, hotkeys, graphics, audio, game paths, per-game'
+    Write-Host 'settings, cheats and texture packs - was copied unchanged.'
+}
+
+# patches.zip is not in the source tree; CI fetches it. Without it the emulator logs a
+# failure to open it and then dies on the way to opening the GS.
+$patches = Join-Path $To 'resources\patches.zip'
+if (-not (Test-Path $patches)) {
+    Write-Host ''
+    Write-Host 'fetching resources\patches.zip (built-in game patches)...'
+    try {
+        $resourcesDir = Split-Path -Parent $patches
+        if (-not (Test-Path $resourcesDir)) { New-Item -ItemType Directory -Path $resourcesDir -Force | Out-Null }
+
+        Invoke-WebRequest -Uri 'https://github.com/PCSX2/pcsx2_patches/releases/latest/download/patches.zip' `
+            -OutFile $patches -UseBasicParsing
+        Write-Host "  got $([math]::Round((Get-Item $patches).Length / 1MB, 1)) MB"
+    } catch {
+        Write-Host "  could not download it: $_"
+        Write-Host '  Fetch it manually from https://github.com/PCSX2/pcsx2_patches/releases/latest'
     }
 }

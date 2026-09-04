@@ -61,6 +61,8 @@ namespace
 		bool closing = false;
 
 		std::atomic_bool subscribed{false};
+		// Set by the reader thread on its way out so the accept loop can reap this entry.
+		std::atomic_bool finished{false};
 
 		void SetSubscribed(bool value) override { subscribed.store(value, std::memory_order_release); }
 	};
@@ -238,6 +240,44 @@ namespace
 		}
 
 		CloseClient(client);
+
+		// Announce that this connection is over. Without this the entry stayed in s_clients
+		// for the life of the server: every command leaked a slot, and once eight had been
+		// run the accept loop refused everything else. It looked like the emulator hanging
+		// after a long command sequence, because that is exactly when the cap was reached.
+		client->finished.store(true, std::memory_order_release);
+	}
+
+	// Joins and drops connections whose reader has exited. Called from the accept loop, so
+	// it never runs on a thread it is about to join.
+	void ReapFinishedClients()
+	{
+		std::vector<std::shared_ptr<Client>> finished;
+		{
+			std::lock_guard lock(s_clients_mutex);
+			for (auto it = s_clients.begin(); it != s_clients.end();)
+			{
+				if ((*it)->finished.load(std::memory_order_acquire))
+				{
+					finished.push_back(*it);
+					it = s_clients.erase(it);
+				}
+				else
+				{
+					++it;
+				}
+			}
+		}
+
+		for (const auto& client : finished)
+		{
+			CloseClient(client);
+
+			if (client->reader.joinable())
+				client->reader.join();
+			if (client->writer.joinable())
+				client->writer.join();
+		}
 	}
 
 	void AcceptLoop()
@@ -254,6 +294,8 @@ namespace
 
 				continue;
 			}
+
+			ReapFinishedClients();
 
 			auto client = std::make_shared<Client>();
 			client->sock = sock;

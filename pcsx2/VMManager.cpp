@@ -9,6 +9,7 @@
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
 #include "DebugServer/DebugServer.h"
+#include "DebugServer/DebugServerCommands.h"
 #include "DebugTools/DebuggerControl.h"
 #include "DebugTools/SymbolImporter.h"
 #include "Elfheader.h"
@@ -325,7 +326,10 @@ void VMManager::SetState(VMState state)
 	// running: a debug client blocked waiting for a stop while the VM is paused has to be
 	// released too, or it waits out its full timeout on a VM that is already gone.
 	if (state == VMState::Stopping)
+	{
 		DebuggerControl::OnVMShutdown();
+		DebugServerCommands::ClearHeldInputs();
+	}
 }
 
 bool VMManager::HasValidVM()
@@ -2975,6 +2979,10 @@ void VMManager::Internal::PollInputOnCPUThread()
 {
 	Host::PumpMessagesOnCPUThread();
 	InputManager::PollSources();
+
+	// After PollSources on purpose: it has just refreshed the pad from the real input
+	// sources, so anything written before this point would be overwritten unseen.
+	DebugServerCommands::ApplyHeldInputs();
 
 	if (EmuConfig.EnableRecordingTools)
 	{

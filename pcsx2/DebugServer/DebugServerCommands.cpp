@@ -8,9 +8,13 @@
 #include "DebugServer/MemorySearch.h"
 
 #include "DebugTools/Breakpoints.h"
+
+#include "SIO/Pad/Pad.h"
+#include "SIO/Pad/PadTypes.h"
 #include "DebugTools/MipsAssembler.h"
 #include "DebugTools/MipsStackWalk.h"
 
+#include "CDVD/CDVDcommon.h"
 #include "GS/GS.h"
 
 #include "common/Error.h"
@@ -26,6 +30,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <atomic>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -2239,6 +2245,367 @@ namespace
 		return DebugServerJson::MakeResult(request.id, result, allocator);
 	}
 
+	// --- booting ------------------------------------------------------------------------
+
+	std::string CmdBoot(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		if (DebugServerDispatch::VMIsValid())
+			return Fail(request, "bad_args", "a VM is already running; shut it down first");
+
+		VMBootParameters boot;
+		boot.filename = ArgString(request, "path");
+		boot.elf_override = ArgString(request, "elf");
+
+		const bool bios_only = ArgBool(request, "bios", false);
+		if (bios_only)
+			boot.source_type = CDVD_SourceType::NoDisc;
+		else if (boot.filename.empty() && boot.elf_override.empty())
+			return Fail(request, "bad_args", "pass a path, an elf, or bios:true");
+
+		if (const rapidjson::Value* fast = Member(request, "fast_boot"); fast && fast->IsBool())
+			boot.fast_boot = fast->GetBool();
+
+		// Pause on entry is set before booting rather than after: by the time a reply came
+		// back the ELF would already be running, and the entry point long gone.
+		const bool pause_on_entry = ArgBool(request, "pause_on_entry", false);
+
+		std::string boot_error;
+		bool started = false;
+
+		// Booting takes seconds, so it is given a long budget; the alternative is a spurious
+		// timeout on a boot that is progressing perfectly well.
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[boot, pause_on_entry, &started, &boot_error]() {
+					DebugInterface::setPauseOnEntry(pause_on_entry);
+
+					Error error;
+					const VMBootResult result = VMManager::Initialize(boot, &error);
+					started = (result == VMBootResult::StartupSuccess);
+					if (result == VMBootResult::PromptDisableHardcoreMode)
+					{
+						// Not something the server can answer: turning hardcore mode off is
+						// the user's decision, and it would disable the debug server anyway.
+						boot_error = "RetroAchievements hardcore mode is active; disable it to debug";
+					}
+					else if (!started)
+					{
+						boot_error = error.GetDescription();
+					}
+
+					if (started)
+						VMManager::SetState(VMState::Running);
+				},
+				60000))
+		{
+			return Fail(request, "timeout", "the boot did not finish in time");
+		}
+
+		if (!started)
+			return Fail(request, "io_error", boot_error.empty() ? "the VM failed to start" : boot_error);
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("booted", true, allocator);
+		result.AddMember("vm_state", rapidjson::Value(VMStateName(), allocator), allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	// --- pad input ----------------------------------------------------------------------
+	//
+	// Injection goes through Pad::SetControllerState, the same entry point the input sources
+	// use, so a bind behaves exactly as it would from a real controller: pressure, deadzone
+	// and inversion settings all still apply.
+	//
+	// A held state is kept here and re-asserted every frame. The pad is repolled from the
+	// real input sources each frame, so a single write would be overwritten immediately and
+	// the button would appear not to work at all.
+
+	struct HeldInput
+	{
+		u32 pad = 0;
+		u32 bind = 0;
+		float value = 1.0f;
+		// 0 means hold until cleared; otherwise decremented once per frame.
+		u32 frames_remaining = 0;
+	};
+
+	// A fixed slot per (pad, bind), held in atomics rather than behind a mutex.
+	//
+	// ApplyHeldInputs runs on the CPU thread every frame, including in the window where the
+	// debugger is pausing and resuming the VM. A lock there put input injection and
+	// execution control on the same mutex and wedged the emulator on resume once a session
+	// had used both. Atomics mean the frame hook only ever loads and stores, so there is
+	// nothing for it to block on.
+	constexpr u32 MAX_INPUT_BINDS = 32;
+
+	struct InputSlot
+	{
+		std::atomic<float> value{0.0f};
+		std::atomic<u32> frames_remaining{0};
+		std::atomic_bool active{false};
+	};
+
+	InputSlot s_input_slots[Pad::NUM_CONTROLLER_PORTS][MAX_INPUT_BINDS];
+
+	void ClearPadSlots(u32 pad)
+	{
+		for (InputSlot& slot : s_input_slots[pad])
+		{
+			if (!slot.active.load(std::memory_order_acquire))
+				continue;
+
+			// Left active for one more frame at zero rather than switched off outright.
+			// Simply going inactive would stop this slot being written, and the pad would
+			// keep whatever value was last put there - so a released button stayed down.
+			slot.value.store(0.0f, std::memory_order_relaxed);
+			slot.frames_remaining.store(1, std::memory_order_release);
+		}
+	}
+
+	bool ResolveBind(u32 pad, std::string_view name, u32& out_bind, std::string& error)
+	{
+		const Pad::ControllerInfo* info = Pad::GetControllerInfo(EmuConfig.Pad.Ports[pad].Type);
+		if (!info)
+		{
+			error = "no controller is configured in that port";
+			return false;
+		}
+
+		const std::optional<u32> index = info->GetBindIndex(name);
+		if (!index.has_value())
+		{
+			error = "unknown button \"" + std::string(name) +
+					"\" for controller type " + std::string(info->name);
+			return false;
+		}
+
+		out_bind = index.value();
+		return true;
+	}
+
+	// Parses {"buttons": ["cross", "start"], "analog": {"left": {"x": .., "y": ..}}} into
+	// bind/value pairs. Button names are matched case insensitively against the controller's
+	// own binding table, so "cross", "Cross" and "CROSS" all work.
+	bool CollectInputs(const DebugServerRequest& request, u32 pad, std::vector<HeldInput>& out,
+		std::string& error)
+	{
+		const Pad::ControllerInfo* info = Pad::GetControllerInfo(EmuConfig.Pad.Ports[pad].Type);
+		if (!info)
+		{
+			error = "no controller is configured in that port";
+			return false;
+		}
+
+		if (const rapidjson::Value* buttons = Member(request, "buttons"))
+		{
+			if (!buttons->IsArray())
+			{
+				error = "buttons must be an array of names";
+				return false;
+			}
+
+			for (const rapidjson::Value& button : buttons->GetArray())
+			{
+				if (!button.IsString())
+				{
+					error = "button names must be strings";
+					return false;
+				}
+
+				const std::string wanted = ToLower(std::string(button.GetString(), button.GetStringLength()));
+
+				bool found = false;
+				for (const InputBindingInfo& binding : info->bindings)
+				{
+					if (ToLower(binding.name) != wanted)
+						continue;
+
+					out.push_back({pad, static_cast<u32>(&binding - info->bindings.data()), 1.0f, 0});
+					found = true;
+					break;
+				}
+
+				if (!found)
+				{
+					error = "unknown button \"" + wanted + "\" for controller type " + info->name;
+					return false;
+				}
+			}
+		}
+
+		// Analog sticks are expressed as -1..1 per axis and split across the two half-axis
+		// binds the pad actually exposes, which is how a real stick reports.
+		static const struct
+		{
+			const char* stick;
+			const char* negative;
+			const char* positive;
+			bool is_x;
+		} axes[] = {
+			{"left", "LLeft", "LRight", true},
+			{"left", "LUp", "LDown", false},
+			{"right", "RLeft", "RRight", true},
+			{"right", "RUp", "RDown", false},
+		};
+
+		const rapidjson::Value* analog = Member(request, "analog");
+		if (analog && analog->IsObject())
+		{
+			for (const auto& axis : axes)
+			{
+				const auto stick = analog->FindMember(axis.stick);
+				if (stick == analog->MemberEnd() || !stick->value.IsObject())
+					continue;
+
+				const auto component = stick->value.FindMember(axis.is_x ? "x" : "y");
+				if (component == stick->value.MemberEnd() || !component->value.IsNumber())
+					continue;
+
+				const float value = std::clamp(static_cast<float>(component->value.GetDouble()), -1.0f, 1.0f);
+				if (value == 0.0f)
+					continue;
+
+				u32 bind = 0;
+				const char* name = (value < 0.0f) ? axis.negative : axis.positive;
+				if (!ResolveBind(pad, name, bind, error))
+					return false;
+
+				out.push_back({pad, bind, std::fabs(value), 0});
+			}
+		}
+
+		return true;
+	}
+
+	std::string ApplyInput(const DebugServerRequest& request, bool momentary)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const u32 pad = ArgU32(request, "pad", 0);
+		if (pad >= Pad::NUM_CONTROLLER_PORTS)
+			return Fail(request, "bad_args", "pad must be a valid controller port");
+
+		const u32 frames = momentary ? std::clamp(ArgU32(request, "duration_frames", 2), 1u, 600u) : 0;
+
+		std::vector<HeldInput> inputs;
+		std::string error;
+		bool ok = false;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([&request, pad, &inputs, &error, &ok]() {
+				ok = CollectInputs(request, pad, inputs, error);
+			}))
+		{
+			return Fail(request, "timeout", "the CPU thread did not respond");
+		}
+
+		if (!ok)
+			return Fail(request, "bad_args", error);
+
+		// Replacing rather than adding: setting a state twice should not stack, and a set
+		// with no buttons is how a caller releases everything on that pad.
+		ClearPadSlots(pad);
+
+		for (const HeldInput& input : inputs)
+		{
+			if (input.bind >= MAX_INPUT_BINDS)
+				continue;
+
+			// Overwrites the release-at-zero that ClearPadSlots just queued for this slot,
+			// so re-pressing a button does not spend a frame released first.
+
+			InputSlot& slot = s_input_slots[pad][input.bind];
+			slot.value.store(input.value, std::memory_order_relaxed);
+			slot.frames_remaining.store(frames, std::memory_order_relaxed);
+			slot.active.store(true, std::memory_order_release);
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("pad", pad, allocator);
+		result.AddMember("binds", static_cast<u64>(inputs.size()), allocator);
+		if (momentary)
+			result.AddMember("duration_frames", frames, allocator);
+		else
+			result.AddMember("held", !inputs.empty(), allocator);
+
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
+	std::string CmdInputPress(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		return ApplyInput(request, true);
+	}
+
+	std::string CmdInputSet(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		return ApplyInput(request, false);
+	}
+
+	std::string CmdInputRelease(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		for (u32 pad = 0; pad < Pad::NUM_CONTROLLER_PORTS; pad++)
+			ClearPadSlots(pad);
+
+		rapidjson::Document result;
+		result.SetObject();
+		result.AddMember("released", true, result.GetAllocator());
+		return DebugServerJson::MakeResult(request.id, result, result.GetAllocator());
+	}
+
+	std::string CmdInputList(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const u32 pad = ArgU32(request, "pad", 0);
+		if (pad >= Pad::NUM_CONTROLLER_PORTS)
+			return Fail(request, "bad_args", "pad must be a valid controller port");
+
+		std::vector<std::string> names;
+		std::string type_name;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout([pad, &names, &type_name]() {
+				const Pad::ControllerInfo* info = Pad::GetControllerInfo(EmuConfig.Pad.Ports[pad].Type);
+				if (!info)
+					return;
+
+				type_name = info->name;
+				for (const InputBindingInfo& binding : info->bindings)
+				{
+					if (binding.bind_type == InputBindingInfo::Type::Button ||
+						binding.bind_type == InputBindingInfo::Type::HalfAxis)
+					{
+						names.emplace_back(binding.name);
+					}
+				}
+			}))
+		{
+			return Fail(request, "timeout", "the CPU thread did not respond");
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("pad", pad, allocator);
+		result.AddMember("controller", Str(type_name, allocator), allocator);
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const std::string& name : names)
+			list.PushBack(Str(name, allocator), allocator);
+
+		result.AddMember("buttons", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
 	std::string CmdSubscribe(const DebugServerRequest& request, DebugServerConnection& connection)
 	{
 		connection.SetSubscribed(true);
@@ -2281,6 +2648,54 @@ std::string DebugServerCommands::MakeStopEventLine(const DebuggerControl::StopEv
 	rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 	doc.Accept(writer);
 	return std::string(buffer.GetString(), buffer.GetSize());
+}
+
+void DebugServerCommands::ApplyHeldInputs()
+{
+	// Only while actually executing. Pad::SetControllerState dereferences the controller for
+	// the port without checking it exists, so writing to it while the VM is paused or being
+	// torn down - which is exactly the window stepping puts us in - is a null dereference.
+	if (VMManager::GetState() != VMState::Running)
+		return;
+
+	// Applied after InputManager::PollSources, which has just overwritten the pad from the
+	// real controllers; writing before that point would be silently discarded. Lock free by
+	// design - see the note on s_input_slots.
+	for (u32 pad = 0; pad < Pad::NUM_CONTROLLER_PORTS; pad++)
+	{
+		if (!Pad::HasConnectedPad(static_cast<u8>(pad)))
+			continue;
+
+		for (u32 bind = 0; bind < MAX_INPUT_BINDS; bind++)
+		{
+			InputSlot& slot = s_input_slots[pad][bind];
+			if (!slot.active.load(std::memory_order_acquire))
+				continue;
+
+			Pad::SetControllerState(pad, bind, slot.value.load(std::memory_order_relaxed));
+
+			// 0 means hold until released; anything else is a tap that expires.
+			const u32 remaining = slot.frames_remaining.load(std::memory_order_relaxed);
+			if (remaining == 0)
+				continue;
+
+			if (remaining == 1)
+			{
+				// Released explicitly on the last frame, so the button does not stick down
+				// simply because nothing overwrote it.
+				Pad::SetControllerState(pad, bind, 0.0f);
+				slot.active.store(false, std::memory_order_release);
+			}
+
+			slot.frames_remaining.store(remaining - 1, std::memory_order_relaxed);
+		}
+	}
+}
+
+void DebugServerCommands::ClearHeldInputs()
+{
+	for (u32 pad = 0; pad < Pad::NUM_CONTROLLER_PORTS; pad++)
+		ClearPadSlots(pad);
 }
 
 void DebugServerCommands::RegisterAll()
@@ -2339,6 +2754,13 @@ void DebugServerCommands::RegisterAll()
 	s_handlers["loadstate"] = CmdLoadState;
 	s_handlers["screenshot"] = CmdScreenshot;
 	s_handlers["patch.reload"] = CmdPatchReload;
+
+	s_handlers["boot"] = CmdBoot;
+
+	s_handlers["input.press"] = CmdInputPress;
+	s_handlers["input.set"] = CmdInputSet;
+	s_handlers["input.release"] = CmdInputRelease;
+	s_handlers["input.list"] = CmdInputList;
 }
 
 const DebugServerHandler* DebugServerCommands::Find(const std::string& name)

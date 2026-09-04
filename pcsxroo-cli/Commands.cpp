@@ -9,6 +9,8 @@
 
 #include <fmt/format.h>
 
+#include <cstdlib>
+
 namespace
 {
 	using Allocator = rapidjson::Document::AllocatorType;
@@ -55,6 +57,18 @@ namespace
 		// An address argument is passed through as a string so the server resolves literals
 		// and expressions with one set of rules, rather than the CLI guessing.
 		void Address(const char* name, const std::string& text) { Str(name, text); }
+
+		// analog: { "<stick>": { "x": .., "y": .. } }, merged so both sticks can be set.
+		void Stick(const char* stick, float x, float y)
+		{
+			if (!m_args.HasMember("analog"))
+				m_args.AddMember("analog", rapidjson::Value(rapidjson::kObjectType), Alloc());
+
+			rapidjson::Value axes(rapidjson::kObjectType);
+			axes.AddMember("x", rapidjson::Value(x), Alloc());
+			axes.AddMember("y", rapidjson::Value(y), Alloc());
+			m_args["analog"].AddMember(rapidjson::Value(stick, Alloc()), axes, Alloc());
+		}
 
 		std::string Finish()
 		{
@@ -206,8 +220,166 @@ bool PcsxrooCommands::Build(std::vector<std::string> argv, const PcsxrooArgs::Gl
 	}
 
 	// --- execution ---
+	// "resume" reads better than "run" when unpausing, and agents reach for both.
+	if (group == "resume")
+		return simple("run");
+
 	if (group == "run" || group == "pause" || group == "reset" || group == "shutdown")
 		return simple(group.c_str());
+
+	if (group == "boot")
+	{
+		Builder builder("boot");
+
+		const bool bios = PcsxrooArgs::TakeFlag(argv, "--bios");
+		if (bios)
+			builder.Bool("bios", true);
+
+		if (PcsxrooArgs::TakeFlag(argv, "--pause-on-entry"))
+			builder.Bool("pause_on_entry", true);
+		if (PcsxrooArgs::TakeFlag(argv, "--fast-boot"))
+			builder.Bool("fast_boot", true);
+
+		std::string value;
+		if (PcsxrooArgs::TakeOption(argv, "--elf", value, error))
+			builder.Str("elf", value);
+		else if (!error.empty())
+			return false;
+
+		if (!argv.empty())
+			builder.Str("path", argv[0]);
+		else if (!bios && value.empty())
+		{
+			error = "pass a game path, --elf PATH, or --bios";
+			return false;
+		}
+
+		out.cmd = builder.Cmd();
+		out.json = builder.Finish();
+		return true;
+	}
+
+	if (group == "input")
+	{
+		if (!Need(argv, 0, "an input verb", error))
+			return false;
+
+		const std::string verb = argv[0];
+		argv.erase(argv.begin());
+
+		if (verb == "list" || verb == "release")
+		{
+			Builder builder("input." + verb);
+			std::string value;
+			if (PcsxrooArgs::TakeOption(argv, "--pad", value, error))
+			{
+				u64 pad = 0;
+				if (!PcsxrooArgs::ParseNumber(value, pad))
+				{
+					error = "invalid --pad";
+					return false;
+				}
+
+				builder.Num("pad", pad);
+			}
+			else if (!error.empty())
+			{
+				return false;
+			}
+
+			out.cmd = builder.Cmd();
+			out.json = builder.Finish();
+			return true;
+		}
+
+		if (verb != "press" && verb != "set")
+		{
+			error = "unknown input verb: " + verb;
+			return false;
+		}
+
+		Builder builder("input." + verb);
+
+		std::string value;
+		if (PcsxrooArgs::TakeOption(argv, "--pad", value, error))
+		{
+			u64 pad = 0;
+			if (!PcsxrooArgs::ParseNumber(value, pad))
+			{
+				error = "invalid --pad";
+				return false;
+			}
+
+			builder.Num("pad", pad);
+		}
+		else if (!error.empty())
+		{
+			return false;
+		}
+
+		if (verb == "press" && PcsxrooArgs::TakeOption(argv, "--frames", value, error))
+		{
+			u64 frames = 0;
+			if (!PcsxrooArgs::ParseNumber(value, frames))
+			{
+				error = "invalid --frames";
+				return false;
+			}
+
+			builder.Num("duration_frames", frames);
+		}
+		else if (!error.empty())
+		{
+			return false;
+		}
+
+		// Analog sticks as "--left-stick X,Y" with each component in -1..1.
+		for (const char* stick : {"--left-stick", "--right-stick"})
+		{
+			if (!PcsxrooArgs::TakeOption(argv, stick, value, error))
+			{
+				if (!error.empty())
+					return false;
+
+				continue;
+			}
+
+			const size_t comma = value.find(',');
+			if (comma == std::string::npos)
+			{
+				error = std::string(stick) + " must be X,Y";
+				return false;
+			}
+
+			builder.Stick(std::string(stick) == "--left-stick" ? "left" : "right",
+				std::strtof(value.substr(0, comma).c_str(), nullptr),
+				std::strtof(value.substr(comma + 1).c_str(), nullptr));
+		}
+
+		// Everything left is a button name; none is how "set" releases a pad.
+		std::vector<std::string> buttons;
+		for (const std::string& argument : argv)
+		{
+			if (!argument.empty() && argument[0] == '-')
+			{
+				error = "unexpected option: " + argument;
+				return false;
+			}
+
+			buttons.push_back(argument);
+		}
+
+		if (verb == "press" && buttons.empty())
+		{
+			error = "press needs at least one button; see input list";
+			return false;
+		}
+
+		builder.StrArray("buttons", buttons);
+		out.cmd = builder.Cmd();
+		out.json = builder.Finish();
+		return true;
+	}
 
 	if (group == "step")
 	{
