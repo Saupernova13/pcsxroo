@@ -52,6 +52,9 @@ if(ENABLE_QT_UI)
 	add_subdirectory(pcsx2-qt)
 endif()
 
+# PCSXROO debugger CLI: a thin client over the debug server, no Qt.
+add_subdirectory(pcsxroo-cli)
+
 # Updater is Windows only for now.
 if (WIN32)
 	add_subdirectory(updater)
