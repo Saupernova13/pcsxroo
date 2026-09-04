@@ -6,6 +6,11 @@ set(CMAKE_AUTOUIC ON)
 
 add_executable(pcsx2-qt)
 
+# PCSXROO ships as its own binary so it is distinguishable from a stock PCSX2 in a
+# task list, a window title and a crash dump. The CMake target keeps the upstream
+# name to avoid churn through the rest of the build files.
+set_target_properties(pcsx2-qt PROPERTIES OUTPUT_NAME "pcsxroo-qt")
+
 target_sources(pcsx2-qt PRIVATE
 	AboutDialog.cpp
 	AboutDialog.h

@@ -1538,7 +1538,9 @@ bool Host::RequestResetSettings(bool folders, bool core, bool controllers, bool 
 
 QString QtHost::GetAppNameAndVersion()
 {
-	return QString("PCSX2 %1").arg(BuildVersion::GitRev);
+	// The PCSX2 revision stays visible: a crash report from this fork has to remain
+	// traceable to the upstream commit it was built from.
+	return QString("PCSXROO (PCSX2 %1)").arg(BuildVersion::GitRev);
 }
 
 QString QtHost::GetAppConfigSuffix()

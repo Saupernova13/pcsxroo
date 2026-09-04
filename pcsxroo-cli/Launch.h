@@ -15,6 +15,7 @@ namespace PcsxrooLaunch
 		std::string game;          // iso or elf; may be empty to boot the BIOS
 		std::string emulator;      // explicit path, otherwise found beside this executable
 		bool pause_on_entry = false;
+		bool boot_bios = false;   // --bios: boot the PS2 BIOS with no disc
 		u32 ready_timeout_ms = 60000;
 		int port = 28110;
 	};

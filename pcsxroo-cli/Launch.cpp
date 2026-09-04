@@ -48,6 +48,7 @@ bool PcsxrooLaunch::ParseOptions(std::vector<std::string>& argv, int port, Optio
 {
 	out.port = port;
 	out.pause_on_entry = PcsxrooArgs::TakeFlag(argv, "--pause-on-entry");
+	out.boot_bios = PcsxrooArgs::TakeFlag(argv, "--bios");
 
 	std::string value;
 	if (PcsxrooArgs::TakeOption(argv, "--emulator", value, error))
@@ -101,16 +102,13 @@ bool PcsxrooLaunch::Run(const Options& options, u64& pid, std::string& error)
 	if (options.pause_on_entry)
 		arguments += " -pauseonentry";
 
-	if (options.game.empty())
-	{
-		// No game means boot the BIOS, which is what the smoke test uses. -batch is only
-		// added alongside a boot target: on its own it leaves nothing to boot.
+	// With no game, the emulator comes up idle with the server listening and no VM. That is
+	// deliberately not the same as booting the BIOS: starting the emulator and starting a VM
+	// fail for different reasons, and an agent that cannot tell them apart is stuck.
+	if (options.boot_bios)
 		arguments += " -bios";
-	}
-	else
-	{
+	else if (!options.game.empty())
 		arguments += fmt::format(" -batch \"{}\"", options.game);
-	}
 
 #ifdef _WIN32
 	STARTUPINFOW startup = {};
