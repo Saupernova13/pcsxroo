@@ -8,6 +8,7 @@
 #include "Counters.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
+#include "DebugServer/DebugServer.h"
 #include "DebugTools/DebuggerControl.h"
 #include "DebugTools/SymbolImporter.h"
 #include "Elfheader.h"
@@ -136,6 +137,7 @@ namespace VMManager
 	static void ResetResumeTimestamp();
 	static void SaveSessionTime(const std::string& prev_serial);
 	static void ReloadPINE();
+	static void ReloadDebugServer();
 
 	static float GetTargetSpeedForLimiterMode(LimiterModeType mode);
 	static void ResetFrameLimiter();
@@ -438,6 +440,7 @@ bool VMManager::Internal::CPUThreadInitialize()
 		Achievements::Initialize();
 
 	ReloadPINE();
+	ReloadDebugServer();
 
 	if (EmuConfig.EnableDiscordPresence)
 		InitializeDiscordPresence();
@@ -454,6 +457,7 @@ void VMManager::Internal::CPUThreadShutdown()
 	ShutdownDiscordPresence();
 
 	PINEServer::Deinitialize();
+	DebugServer::Deinitialize();
 
 	Achievements::Shutdown(false);
 
@@ -1192,6 +1196,7 @@ void VMManager::UpdateDiscDetails(bool booting)
 	{
 		Achievements::GameChanged(s_disc_crc, s_current_crc);
 		ReloadPINE();
+	ReloadDebugServer();
 		UpdateDiscordPresence(s_state.load(std::memory_order_relaxed) == VMState::Initializing);
 		FileMcd_Reopen(memcardFilters.empty() ? s_disc_serial : memcardFilters);
 	}
@@ -3811,6 +3816,19 @@ void VMManager::ReloadPINE()
 
 	if (EmuConfig.EnablePINE)
 		PINEServer::Initialize(EmuConfig.PINESlot);
+}
+
+void VMManager::ReloadDebugServer()
+{
+	const bool needs_reinit = (EmuConfig.EnableDebugServer != DebugServer::IsInitialized() ||
+							   DebugServer::GetPort() != EmuConfig.DebugServerPort);
+	if (!needs_reinit)
+		return;
+
+	DebugServer::Deinitialize();
+
+	if (EmuConfig.EnableDebugServer)
+		DebugServer::Initialize(EmuConfig.DebugServerPort);
 }
 
 void VMManager::InitializeDiscordPresence()

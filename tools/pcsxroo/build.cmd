@@ -55,6 +55,13 @@ if not exist "%REPO%\build\CMakeCache.txt" (
 if "%~1"=="" (
   echo === Building all targets ===
   "%CMAKE%" --build build --parallel || exit /b 1
+
+  rem The install step is the deployment step: it assembles bin\ with the Qt and third
+  rem party DLLs beside the executable plus the resources it loads at runtime. Running
+  rem build\pcsx2-qt\pcsx2-qt.exe directly only works if deps\bin happens to be on PATH,
+  rem and fails with a bare 0xC0000135 when it is not.
+  echo === Installing to bin ===
+  "%CMAKE%" --install build || exit /b 1
 ) else (
   echo === Building %* ===
   "%CMAKE%" --build build --parallel --target %* || exit /b 1

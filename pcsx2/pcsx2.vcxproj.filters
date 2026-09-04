@@ -815,6 +815,15 @@
     <ClCompile Include="PINE.cpp">
       <Filter>System</Filter>
     </ClCompile>
+    <ClCompile Include="DebugServer\DebugServerDispatch.cpp">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClCompile>
+    <ClCompile Include="DebugServer\DebugServerCommands.cpp">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClCompile>
+    <ClCompile Include="DebugServer\DebugServer.cpp">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClCompile>
     <ClCompile Include="DebugServer\DebugServerJson.cpp">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClCompile>
@@ -1723,6 +1732,12 @@
     </ClInclude>
     <ClInclude Include="PINE.h">
       <Filter>System\Include</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugServer\DebugServerDispatch.h">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugServer\DebugServerCommands.h">
+      <Filter>System\Ps2\DebugServer</Filter>
     </ClInclude>
     <ClInclude Include="DebugServer\DebugServerJson.h">
       <Filter>System\Ps2\DebugServer</Filter>

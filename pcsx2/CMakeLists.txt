@@ -803,11 +803,16 @@ endif()
 
 # DebugServer sources
 set(pcsx2DebugServerSources
+	DebugServer/DebugServer.cpp
+	DebugServer/DebugServerCommands.cpp
+	DebugServer/DebugServerDispatch.cpp
 	DebugServer/DebugServerJson.cpp)
 
 # DebugServer headers
 set(pcsx2DebugServerHeaders
 	DebugServer/DebugServer.h
+	DebugServer/DebugServerCommands.h
+	DebugServer/DebugServerDispatch.h
 	DebugServer/DebugServerJson.h)
 
 # DebugTools sources
