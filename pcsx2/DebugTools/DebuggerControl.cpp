@@ -7,6 +7,7 @@
 #include "DebugTools/MipsStackWalk.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -27,6 +28,7 @@ namespace
 
 	std::vector<CallbackEntry> s_callbacks;
 	size_t s_next_callback_handle = 1;
+	std::atomic_bool s_last_pause_was_internal{false};
 } // namespace
 
 const char* DebuggerControl::StopReasonName(StopReason reason)
@@ -189,6 +191,20 @@ bool DebuggerControl::RunTo(BreakPointCpu cpu_type, u32 addr)
 
 void DebuggerControl::OnVMPaused()
 {
+	// CBreakPoints::Update pauses and resumes the core itself so it can reset the
+	// recompilers, and flags it with corePaused. Recording that as a stop would mean every
+	// breakpoint added while a game runs produced a spurious "user" stop - which is exactly
+	// the sort of thing a client waiting on a sequence number would latch onto instead of
+	// the breakpoint it actually asked for.
+	if (CBreakPoints::GetCorePaused())
+	{
+		CBreakPoints::SetCorePaused(false);
+		s_last_pause_was_internal = true;
+		return;
+	}
+
+	s_last_pause_was_internal = false;
+
 	StopEvent event;
 
 	if (CBreakPoints::GetBreakpointTriggered())
@@ -219,6 +235,11 @@ void DebuggerControl::OnVMPaused()
 	}
 
 	RecordStop(event);
+}
+
+bool DebuggerControl::LastPauseWasInternal()
+{
+	return s_last_pause_was_internal.load(std::memory_order_acquire);
 }
 
 void DebuggerControl::OnVMResumed()

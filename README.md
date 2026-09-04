@@ -9,7 +9,7 @@ tools\pcsxroo\build.cmd
 tools\pcsxroo\seed-portable.ps1
 
 bin\pcsxroo.exe launch --pause-on-entry "G:\roms\ps2\game.iso"
-bin\pcsxroo.exe bp add 0x12BBD0 --cond "$a0 == 2"
+bin\pcsxroo.exe bp add 0x12BBD0 --cond "a0 == 2"
 bin\pcsxroo.exe run
 bin\pcsxroo.exe wait --since 0
 bin\pcsxroo.exe reg dump --category GPR

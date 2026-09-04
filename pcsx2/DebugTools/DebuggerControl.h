@@ -87,6 +87,11 @@ namespace DebuggerControl
 	void OnVMPaused();
 	void OnVMResumed();
 
+	// True when the pause just handled was the breakpoint machinery pausing the core to
+	// reset the recompilers, rather than a stop anyone asked for. OnVMPaused consumes
+	// CBreakPoints' own flag, so the UI has to ask here instead of reading it directly.
+	bool LastPauseWasInternal();
+
 	// Releases anyone blocked in WaitForStop, so a client cannot hang on a dead VM.
 	void OnVMShutdown();
 

@@ -15,7 +15,7 @@ tools\pcsxroo\build.cmd                 build the emulator and the CLI into bin\
 tools\pcsxroo\seed-portable.ps1         copy BIOS and settings from an existing PCSX2
 
 bin\pcsxroo.exe launch --pause-on-entry "G:\roms\ps2\game.iso"
-bin\pcsxroo.exe bp add 0x12BBD0 --cond "$a0 == 2" --desc "per-frame routine"
+bin\pcsxroo.exe bp add 0x12BBD0 --cond "a0 == 2" --desc "per-frame routine"
 bin\pcsxroo.exe run
 bin\pcsxroo.exe wait --timeout 60000
 bin\pcsxroo.exe reg dump --category GPR
@@ -81,10 +81,27 @@ yet" from "the emulator is gone".
 
 With no game, `launch` starts the emulator idle with the server up and no VM. That is
 deliberately not the same as booting: starting the emulator and starting a VM fail for
-different reasons.
+different reasons, and an agent that cannot tell them apart is stuck.
 
-**Execution** — `run`, `pause`, `step into|over|out`, `run-to <addr>`,
-`frame-advance [count]`, `reset`, `shutdown`
+**Execution** — `run`, `resume`, `pause`, `step into|over|out`, `run-to <addr>`,
+`frame-advance [count]`, `reset`, `shutdown`,
+`boot <game> | boot --bios | boot --elf PATH [--pause-on-entry] [--fast-boot]`
+
+`boot` starts a VM in an emulator that is already up, so an agent can boot, shut down and
+boot something else without restarting the process. `resume` is an alias for `run`.
+
+**Input** — `input press <button...> [--pad N] [--frames N]`,
+`input set <button...> [--left-stick X,Y] [--right-stick X,Y]`,
+`input release`, `input list [--pad N]`
+
+`press` taps for a couple of frames; `set` holds until changed, and `set` with no buttons
+releases that pad. Analog components run -1..1. Button names come from `input list` and are
+the pad's own (`Cross`, `Start`, `L1`, `LUp`, ...), matched case insensitively.
+
+Injection goes through the same entry point the real input sources use, so deadzone,
+pressure and inversion settings all still apply. Held state is re-asserted every frame,
+because the pad is repolled from the real controllers each frame and a single write would
+be overwritten before the game saw it.
 
 **Breakpoints** — `bp add <addr> [--cond EXPR] [--desc TEXT] [--temporary] [--disabled]`,
 `bp remove|enable|disable <addr>`, `bp list [--include-temp]`, `bp clear`
@@ -123,13 +140,17 @@ main+0x40       an expression, resolved by the debugger's own parser
 `eval` exposes the same parser directly, and is the escape hatch for anything the command
 set does not model.
 
+**Registers in expressions have no `$`.** `a0 == 2` is a valid condition; `$a0 == 2` is
+rejected with "Invalid operator". The `$` prefix is accepted only by `reg get` and
+`reg set`, which take a register name rather than an expression.
+
 ## Wire protocol
 
 TCP, loopback only, one UTF-8 JSON object per line, `\n` terminated. Requests are capped at
 1 MiB. `protocol_version` is `1`; check it with `version`.
 
 ```json
-{"id": 7, "cmd": "bp.add", "args": {"cpu": "ee", "addr": 1227728, "condition": "$a0 == 2"}}
+{"id": 7, "cmd": "bp.add", "args": {"cpu": "ee", "addr": 1227728, "condition": "a0 == 2"}}
 {"id": 7, "ok": true, "result": {"addr": 1227728, "addr_hex": "0x0012bbd0"}}
 {"id": 7, "ok": false, "error": {"code": "not_paused", "message": "..."}}
 ```
@@ -184,7 +205,15 @@ memory searcher does, but live and scriptable.
   expose it to a network.
 - **`mem.dump` writes files with the emulator's privileges**, server side.
 - **Savestates and screenshots are asynchronous.** Both reply `queued`. Use
-  `savestate --wait-flush` when you need the file on disk before continuing.
+  `savestate --wait-flush` when you need the file on disk before continuing. A screenshot
+  needs the VM *running*: the GS only presents a frame while it executes, so one requested
+  while paused sits in the queue and no file appears.
+- **`status` reports a stale PC while the VM is running.** The recompiler only writes the
+  program counter back at certain points, so the value is meaningful once paused and
+  little more than a hint before that. `pause` first if the PC matters.
+- **PCSXROO must be built Release.** A Devel build cannot boot a VM at all: it fails hard
+  just after the game database loads. `tools\pcsxroouild.cmd` defaults to Release;
+  `PCSXROO_BUILD_TYPE=Devel` is there for core work that does not need to run a game.
 
 ## Startup gotchas
 

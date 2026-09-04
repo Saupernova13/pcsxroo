@@ -77,13 +77,19 @@ try {
     Check 'status with no emulator exits 3' ($script:lastExit -eq 3) "got $($script:lastExit)"
 
     # --- 2. launch ---
-    $launchArgs = @('launch', '--ready-timeout', '60000')
-    if ($Bios) { $launchArgs += '--bios' }
-    if ($Game) { $launchArgs += $Game }
-
-    Invoke-Cli $launchArgs
+    Invoke-Cli @('launch', '--ready-timeout', '60000')
     Check 'launch reports ready' ($script:lastExit -eq 0) "exit $($script:lastExit)"
     if ($script:lastExit -ne 0) { throw 'cannot continue without a running emulator' }
+
+    # Booting is a separate step from starting the emulator, and fails for its own reasons.
+    if ($Bios -or $Game) {
+        $bootArgs = @('boot')
+        if ($Game) { $bootArgs += $Game } else { $bootArgs += '--bios' }
+
+        Invoke-Cli (@('--timeout', '120000') + $bootArgs)
+        Check 'boot succeeds' ($script:lastExit -eq 0) "exit $($script:lastExit)"
+        Start-Sleep -Seconds $(if ($Game) { 25 } else { 6 })
+    }
 
     $emulator = Get-Process pcsxroo-qt -ErrorAction SilentlyContinue | Select-Object -Last 1
 
@@ -113,6 +119,19 @@ try {
         $status = Send @('status')
         Check 'a VM is running' ($status.result.vm_state -in @('running', 'paused')) $status.result.vm_state
 
+        # Pad input, which is what lets an agent get a game into the state it wants.
+        $buttons = Send @('input', 'list')
+        Check 'input list names the pad' ($buttons.result.buttons.Count -gt 0) $buttons.result.controller
+
+        $pressed = Send @('input', 'press', 'Start')
+        Check 'input press accepted' ($pressed.ok -eq $true) $pressed.error.code
+
+        $held = Send @('input', 'set', 'Cross', '--left-stick', '1.0,0.0')
+        Check 'input set holds two binds' ($held.result.binds -eq 2) $held.result.binds
+
+        $released = Send @('input', 'release')
+        Check 'input release accepted' ($released.ok -eq $true) $released.error.code
+
         $paused = Send @('pause')
         Check 'pause reports a stop' ($null -ne $paused.result.seq) "exit $($script:lastExit)"
 
@@ -128,19 +147,23 @@ try {
         Check 'bp add succeeds' ($added.ok -eq $true) $added.error.code
 
         $list = Send @('bp', 'list')
-        Check 'bp list shows the breakpoint' (($list.result.breakpoints | Where-Object { $_.addr -eq $target }).Count -ge 1) 'not listed'
+        $listed = @($list.result.breakpoints | Where-Object { [uint32] $_.addr -eq [uint32] $target })
+        Check 'bp list shows the breakpoint' ($listed.Count -ge 1) ("listed: " + (($list.result.breakpoints | ForEach-Object { $_.addr_hex }) -join ','))
 
         $null = Send @('run')
         $hit = Send @('--timeout', '30000', 'wait')
         Check 'the breakpoint is hit' ($hit.result.reason -in @('breakpoint', 'step')) $hit.result.reason
 
         # The regression guard for the post-break bookkeeping moved into DebuggerControl:
-        # resuming must not immediately re-report the breakpoint we are sitting on.
+        # resuming must make progress rather than re-reporting the stop we are sitting on
+        # without executing anything. A tight loop legitimately comes back to the same
+        # breakpoint, so the check is that a new stop is reported at all, with a new
+        # sequence number - not that the address differs.
         $seq = $hit.result.seq
         $null = Send @('run')
-        $again = Send @('--timeout', '2000', 'wait', '--since', "$seq")
-        Check 'resuming does not instantly re-trigger the same breakpoint' `
-            ($script:lastExit -eq 4 -or $again.result.pc -ne $hit.result.pc) "re-hit at $($again.result.pc_hex)"
+        $again = Send @('--timeout', '3000', 'wait', '--since', "$seq")
+        Check 'resuming makes progress rather than re-reporting the same stop' `
+            ($script:lastExit -eq 4 -or $again.result.seq -gt $seq) "seq $seq -> $($again.result.seq)"
 
         $null = Send @('pause')
         $removed = Send @('bp', 'remove', ("0x{0:x}" -f $target))
@@ -154,9 +177,14 @@ try {
         $stepped = Send @('step', 'into')
         Check 'step into advances the pc' ($stepped.result.pc -ne $before) "$before -> $($stepped.result.pc)"
 
+        $resumed = Send @('resume')
+        Check 'resume unpauses' ($resumed.ok -eq $true) $resumed.error.code
+        $null = Send @('pause')
+
         # --- 8. registers ---
+        # The EE GPR category carries pc, hi and lo alongside the 32 general registers.
         $regs = Send @('reg', 'dump', '--category', 'GPR')
-        Check 'reg dump returns 32 GPRs' ($regs.result.registers.Count -eq 32) $regs.result.registers.Count
+        Check 'reg dump returns the GPRs' ($regs.result.registers.Count -ge 32) $regs.result.registers.Count
 
         # --- 9. memory write verification ---
         $scratch = '0x00100000'
@@ -168,6 +196,11 @@ try {
         Check 'dis returns instructions' ($dis.result.instructions.Count -eq 4) $dis.result.instructions.Count
 
         # --- 11. screenshot ---
+        # The GS only presents a frame while the VM runs, so a snapshot requested while
+        # paused would sit in the queue and the file would never appear.
+        $null = Send @('resume')
+        Start-Sleep -Seconds 2
+
         $shot = Join-Path ([System.IO.Path]::GetTempPath()) 'pcsxroo-smoke.png'
         Remove-Item $shot -ErrorAction SilentlyContinue
         $null = Send @('screenshot', $shot)

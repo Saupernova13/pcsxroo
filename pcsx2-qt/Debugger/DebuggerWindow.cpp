@@ -383,10 +383,10 @@ void DebuggerWindow::onVMPaused()
 
 	// Stops us from telling the disassembly view to jump somwhere because
 	// breakpoint code paused the core.
-	if (!CBreakPoints::GetCorePaused())
+	// DebuggerControl::OnVMPaused runs first and has already consumed the CBreakPoints
+	// flag, so ask it rather than reading a flag that is now always false.
+	if (!DebuggerControl::LastPauseWasInternal())
 		emit onVMActuallyPaused();
-	else
-		CBreakPoints::SetCorePaused(false);
 }
 
 void DebuggerWindow::onVMResumed()
