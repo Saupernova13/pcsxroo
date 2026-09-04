@@ -806,14 +806,16 @@ set(pcsx2DebugServerSources
 	DebugServer/DebugServer.cpp
 	DebugServer/DebugServerCommands.cpp
 	DebugServer/DebugServerDispatch.cpp
-	DebugServer/DebugServerJson.cpp)
+	DebugServer/DebugServerJson.cpp
+	DebugServer/MemorySearch.cpp)
 
 # DebugServer headers
 set(pcsx2DebugServerHeaders
 	DebugServer/DebugServer.h
 	DebugServer/DebugServerCommands.h
 	DebugServer/DebugServerDispatch.h
-	DebugServer/DebugServerJson.h)
+	DebugServer/DebugServerJson.h
+	DebugServer/MemorySearch.h)
 
 # DebugTools sources
 set(pcsx2DebugToolsSources

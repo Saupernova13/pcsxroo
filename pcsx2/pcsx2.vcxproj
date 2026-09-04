@@ -356,6 +356,7 @@
     <ClCompile Include="IopGte.cpp" />
     <ClCompile Include="LayeredSettingsInterface.cpp" />
     <ClCompile Include="PINE.cpp" />
+    <ClCompile Include="DebugServer\MemorySearch.cpp" />
     <ClCompile Include="DebugServer\DebugServerDispatch.cpp" />
     <ClCompile Include="DebugServer\DebugServerCommands.cpp" />
     <ClCompile Include="DebugServer\DebugServer.cpp" />
@@ -808,6 +809,7 @@
     <ClInclude Include="IPU\mpeg2_vlc.h" />
     <ClInclude Include="LayeredSettingsInterface.h" />
     <ClInclude Include="PINE.h" />
+    <ClInclude Include="DebugServer\MemorySearch.h" />
     <ClInclude Include="DebugServer\DebugServerDispatch.h" />
     <ClInclude Include="DebugServer\DebugServerCommands.h" />
     <ClInclude Include="DebugServer\DebugServerJson.h" />

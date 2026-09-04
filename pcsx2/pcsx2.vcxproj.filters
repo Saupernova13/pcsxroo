@@ -815,6 +815,9 @@
     <ClCompile Include="PINE.cpp">
       <Filter>System</Filter>
     </ClCompile>
+    <ClCompile Include="DebugServer\MemorySearch.cpp">
+      <Filter>System\Ps2\DebugServer</Filter>
+    </ClCompile>
     <ClCompile Include="DebugServer\DebugServerDispatch.cpp">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClCompile>
@@ -1732,6 +1735,9 @@
     </ClInclude>
     <ClInclude Include="PINE.h">
       <Filter>System\Include</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugServer\MemorySearch.h">
+      <Filter>System\Ps2\DebugServer</Filter>
     </ClInclude>
     <ClInclude Include="DebugServer\DebugServerDispatch.h">
       <Filter>System\Ps2\DebugServer</Filter>

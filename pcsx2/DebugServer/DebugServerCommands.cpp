@@ -5,6 +5,7 @@
 
 #include "DebugServer/DebugServer.h"
 #include "DebugServer/DebugServerDispatch.h"
+#include "DebugServer/MemorySearch.h"
 
 #include "DebugTools/Breakpoints.h"
 #include "DebugTools/MipsAssembler.h"
@@ -25,6 +26,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <map>
+#include <mutex>
 #include <cstdio>
 #include <string_view>
 #include <utility>
@@ -2065,6 +2069,176 @@ namespace
 		return DebugServerJson::MakeResult(request.id, result, result.GetAllocator());
 	}
 
+	// --- memory search ------------------------------------------------------------------
+
+	// Search sessions live here so a chained filter has something to narrow. Capped in both
+	// count and size: an unbounded first pass over 32 MiB would otherwise be a memory leak
+	// with extra steps.
+	constexpr size_t MAX_SEARCH_SESSIONS = 8;
+	constexpr size_t MAX_SESSION_HITS = 1000000;
+
+	std::mutex s_search_mutex;
+	std::map<u32, std::vector<MemorySearch::Hit>> s_search_sessions;
+	u32 s_next_search_session = 1;
+
+	// Encodes a needle from a JSON value into guest bytes for the given type.
+	bool EncodeNeedle(const rapidjson::Value& value, MemorySearch::ValueType type, std::vector<u8>& out)
+	{
+		const size_t size = MemorySearch::ValueSize(type);
+		if (size == 0)
+			return false;
+
+		out.assign(size, 0);
+
+		if (type == MemorySearch::ValueType::F32)
+		{
+			if (!value.IsNumber())
+				return false;
+
+			const float number = static_cast<float>(value.GetDouble());
+			std::memcpy(out.data(), &number, sizeof(number));
+			return true;
+		}
+
+		if (type == MemorySearch::ValueType::F64)
+		{
+			if (!value.IsNumber())
+				return false;
+
+			const double number = value.GetDouble();
+			std::memcpy(out.data(), &number, sizeof(number));
+			return true;
+		}
+
+		u64 raw = 0;
+		if (value.IsUint64())
+			raw = value.GetUint64();
+		else if (value.IsInt64())
+			raw = static_cast<u64>(value.GetInt64());
+		else if (value.IsString())
+		{
+			u32 parsed = 0;
+			if (!DebugServerJson::ParseAddressLiteral(
+					std::string_view(value.GetString(), value.GetStringLength()), parsed))
+				return false;
+
+			raw = parsed;
+		}
+		else
+		{
+			return false;
+		}
+
+		std::memcpy(out.data(), &raw, size);
+		return true;
+	}
+
+	std::string CmdMemSearch(const DebugServerRequest& request, DebugServerConnection&)
+	{
+		std::string failure;
+		if (!RequireVM(request, failure))
+			return failure;
+
+		const BreakPointCpu cpu_type = ArgCpu(request);
+
+		MemorySearch::Query query;
+		if (!MemorySearch::ParseValueType(ArgString(request, "type").empty() ? "u32" : ArgString(request, "type"),
+				query.type))
+		{
+			return Fail(request, "bad_args", "unknown value type");
+		}
+
+		const std::string comparison = ArgString(request, "comparison");
+		if (!MemorySearch::ParseComparison(comparison.empty() ? "eq" : comparison, query.comparison))
+			return Fail(request, "bad_args", "unknown comparison");
+
+		query.max_results = std::clamp<size_t>(ArgU32(request, "max_results", 1000), 1, 100000);
+
+		if (const rapidjson::Value* value = Member(request, "value"))
+		{
+			if (!EncodeNeedle(*value, query.type, query.value))
+				return Fail(request, "bad_args", "value does not match the value type");
+		}
+
+		const u32 session_id = ArgU32(request, "session", 0);
+		std::vector<MemorySearch::Hit> previous;
+
+		if (session_id != 0)
+		{
+			std::lock_guard lock(s_search_mutex);
+			const auto it = s_search_sessions.find(session_id);
+			if (it == s_search_sessions.end())
+				return Fail(request, "bad_args", "no such search session");
+
+			previous = it->second;
+		}
+		else
+		{
+			std::string error;
+			if (!ResolveAddress(request, "start", cpu_type, query.start, error))
+				return Fail(request, "bad_address", error);
+			if (!ResolveAddress(request, "end", cpu_type, query.end, error))
+				return Fail(request, "bad_address", error);
+		}
+
+		std::vector<MemorySearch::Hit> hits;
+		std::string search_error;
+		bool ok = false;
+
+		if (!DebugServerDispatch::RunOnCPUThreadWithTimeout(
+				[cpu_type, &query, &previous, session_id, &hits, &search_error, &ok]() {
+					MemoryInterface& memory = DebugInterface::get(cpu_type);
+					ok = (session_id != 0)
+							 ? MemorySearch::RunFilterPass(memory, query, previous, hits, search_error)
+							 : MemorySearch::RunFirstPass(memory, query, hits, search_error);
+				},
+				30000))
+		{
+			return Fail(request, "timeout", "the search did not finish in time");
+		}
+
+		if (!ok)
+			return Fail(request, "bad_args", search_error);
+
+		u32 result_session = session_id;
+		{
+			std::lock_guard lock(s_search_mutex);
+			if (result_session == 0)
+			{
+				if (s_search_sessions.size() >= MAX_SEARCH_SESSIONS)
+					s_search_sessions.erase(s_search_sessions.begin());
+
+				result_session = s_next_search_session++;
+			}
+
+			std::vector<MemorySearch::Hit> stored = hits;
+			if (stored.size() > MAX_SESSION_HITS)
+				stored.resize(MAX_SESSION_HITS);
+
+			s_search_sessions[result_session] = std::move(stored);
+		}
+
+		rapidjson::Document result;
+		result.SetObject();
+		auto& allocator = result.GetAllocator();
+		result.AddMember("session", result_session, allocator);
+		result.AddMember("count", static_cast<u64>(hits.size()), allocator);
+		result.AddMember("truncated", hits.size() >= query.max_results, allocator);
+
+		rapidjson::Value list(rapidjson::kArrayType);
+		for (const MemorySearch::Hit& hit : hits)
+		{
+			rapidjson::Value entry(rapidjson::kObjectType);
+			AddAddress(entry, "addr", hit.addr, allocator);
+			entry.AddMember("value", hit.raw, allocator);
+			entry.AddMember("value_number", hit.as_double, allocator);
+			list.PushBack(entry, allocator);
+		}
+
+		result.AddMember("results", list, allocator);
+		return DebugServerJson::MakeResult(request.id, result, allocator);
+	}
+
 	std::string CmdSubscribe(const DebugServerRequest& request, DebugServerConnection& connection)
 	{
 		connection.SetSubscribed(true);
@@ -2148,6 +2322,7 @@ void DebugServerCommands::RegisterAll()
 	s_handlers["mem.write"] = CmdMemWrite;
 	s_handlers["mem.fill"] = CmdMemFill;
 	s_handlers["mem.dump"] = CmdMemDump;
+	s_handlers["mem.search"] = CmdMemSearch;
 
 	s_handlers["dis"] = CmdDisassemble;
 	s_handlers["asm"] = CmdAssemble;

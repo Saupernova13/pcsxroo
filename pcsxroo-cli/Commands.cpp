@@ -565,6 +565,129 @@ bool PcsxrooCommands::Build(std::vector<std::string> argv, const PcsxrooArgs::Gl
 			return true;
 		}
 
+		if (verb == "search")
+		{
+			Builder builder("mem.search");
+			builder.Str("cpu", global.cpu);
+
+			std::string value;
+			if (PcsxrooArgs::TakeOption(argv, "--type", value, error))
+				builder.Str("type", value);
+			else if (!error.empty())
+				return false;
+
+			if (PcsxrooArgs::TakeOption(argv, "--session", value, error))
+			{
+				u64 session = 0;
+				if (!PcsxrooArgs::ParseNumber(value, session))
+				{
+					error = "invalid --session";
+					return false;
+				}
+
+				builder.Num("session", session);
+			}
+			else if (!error.empty())
+			{
+				return false;
+			}
+			else
+			{
+				// A first pass needs somewhere to look; a chained one inherits the range.
+				if (!PcsxrooArgs::TakeOption(argv, "--range", value, error))
+				{
+					if (error.empty())
+						error = "--range START:END is required for a new search";
+					return false;
+				}
+
+				const size_t colon = value.find(':');
+				if (colon == std::string::npos)
+				{
+					error = "--range must be START:END";
+					return false;
+				}
+
+				builder.Address("start", value.substr(0, colon));
+				builder.Address("end", value.substr(colon + 1));
+			}
+
+			if (PcsxrooArgs::TakeOption(argv, "--max", value, error))
+			{
+				u64 max_results = 0;
+				if (!PcsxrooArgs::ParseNumber(value, max_results))
+				{
+					error = "invalid --max";
+					return false;
+				}
+
+				builder.Num("max_results", max_results);
+			}
+			else if (!error.empty())
+			{
+				return false;
+			}
+
+			// Comparisons read as flags so the command line stays close to how the search is
+			// described out loud: "--eq 2", "--increased-by 1", "--changed".
+			struct ComparisonFlag
+			{
+				const char* flag;
+				const char* name;
+				bool takes_value;
+			};
+
+			static const ComparisonFlag comparisons[] = {
+				{"--eq", "eq", true}, {"--ne", "ne", true}, {"--gt", "gt", true}, {"--gte", "gte", true},
+				{"--lt", "lt", true}, {"--lte", "lte", true}, {"--increased-by", "increased_by", true},
+				{"--decreased-by", "decreased_by", true}, {"--changed-by", "changed_by", true},
+				{"--increased", "increased", false}, {"--decreased", "decreased", false},
+				{"--changed", "changed", false}, {"--not-changed", "not_changed", false},
+				{"--unknown", "unknown", false}};
+
+			bool chose = false;
+			for (const ComparisonFlag& comparison : comparisons)
+			{
+				if (comparison.takes_value)
+				{
+					if (!PcsxrooArgs::TakeOption(argv, comparison.flag, value, error))
+					{
+						if (!error.empty())
+							return false;
+
+						continue;
+					}
+
+					u64 needle = 0;
+					if (!PcsxrooArgs::ParseNumber(value, needle))
+					{
+						error = std::string("invalid value for ") + comparison.flag;
+						return false;
+					}
+
+					builder.Num("value", needle);
+				}
+				else if (!PcsxrooArgs::TakeFlag(argv, comparison.flag))
+				{
+					continue;
+				}
+
+				builder.Str("comparison", comparison.name);
+				chose = true;
+				break;
+			}
+
+			if (!chose)
+			{
+				error = "pass a comparison, for example --eq 2, --increased-by 1, --changed or --unknown";
+				return false;
+			}
+
+			out.cmd = builder.Cmd();
+			out.json = builder.Finish();
+			return true;
+		}
+
 		if (verb == "dump")
 		{
 			if (!Need(argv, 2, "an address, a size and a path", error))
