@@ -77,6 +77,19 @@ namespace DebuggerControl
 	// CPU thread only, VM must be paused. Temporary breakpoint at addr, then resume.
 	bool RunTo(BreakPointCpu cpu, u32 addr);
 
+	// Called from VMManager::SetState on the CPU thread.
+	//
+	// OnVMPaused performs the bookkeeping a breakpoint hit requires - clearing temporary
+	// breakpoints, resetting the triggered flag, and setting skip-first so that resuming
+	// does not immediately re-trigger the breakpoint the core is sitting on - and records
+	// the resulting stop. This used to happen in DebuggerWindow::onVMPaused, so with the
+	// window closed none of it ran.
+	void OnVMPaused();
+	void OnVMResumed();
+
+	// Releases anyone blocked in WaitForStop, so a client cannot hang on a dead VM.
+	void OnVMShutdown();
+
 	// Drops all state. Tests only.
 	void ResetForTesting();
 } // namespace DebuggerControl

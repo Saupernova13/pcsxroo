@@ -8,6 +8,7 @@
 #include "Counters.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
+#include "DebugTools/DebuggerControl.h"
 #include "DebugTools/SymbolImporter.h"
 #include "Elfheader.h"
 #include "FW.h"
@@ -296,11 +297,15 @@ void VMManager::SetState(VMState state)
 
 		if (paused)
 		{
+			// Before Host::OnVMPaused, so the debugger window observes state that has
+			// already been cleaned up, and so the bookkeeping still runs with no window.
+			DebuggerControl::OnVMPaused();
 			Host::OnVMPaused();
 			AccumulateSessionPlaytime();
 		}
 		else
 		{
+			DebuggerControl::OnVMResumed();
 			FullscreenUI::OnVMResumed();
 			Host::OnVMResumed();
 			ResetResumeTimestamp();
@@ -311,6 +316,12 @@ void VMManager::SetState(VMState state)
 		// If stopping, break execution as soon as possible.
 		Cpu->ExitExecution();
 	}
+
+	// Deliberately not folded into the branch above, which only fires when the VM was
+	// running: a debug client blocked waiting for a stop while the VM is paused has to be
+	// released too, or it waits out its full timeout on a VM that is already gone.
+	if (state == VMState::Stopping)
+		DebuggerControl::OnVMShutdown();
 }
 
 bool VMManager::HasValidVM()

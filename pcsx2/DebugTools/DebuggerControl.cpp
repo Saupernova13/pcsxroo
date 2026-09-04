@@ -187,6 +187,53 @@ bool DebuggerControl::RunTo(BreakPointCpu cpu_type, u32 addr)
 	return true;
 }
 
+void DebuggerControl::OnVMPaused()
+{
+	StopEvent event;
+
+	if (CBreakPoints::GetBreakpointTriggered())
+	{
+		const BreakPointCpu triggered = CBreakPoints::GetBreakpointTriggeredCpu();
+		event.cpu = (triggered == BREAKPOINT_EE || triggered == BREAKPOINT_IOP) ? triggered : BREAKPOINT_EE;
+
+		DebugInterface& cpu = DebugInterface::get(event.cpu);
+		event.pc = cpu.getPC();
+		event.bp_addr = event.pc;
+		event.reason = CBreakPoints::IsSteppingBreakPoint(event.cpu, event.pc)
+						   ? StopReason::Step
+						   : StopReason::Breakpoint;
+
+		// Everything below used to live in DebuggerWindow::onVMPaused, so none of it
+		// happened with the window closed: stepping breakpoints leaked, and resuming
+		// re-triggered the breakpoint the core was already sitting on.
+		CBreakPoints::ClearTemporaryBreakPoints();
+		CBreakPoints::SetBreakpointTriggered(false, BREAKPOINT_IOP_AND_EE);
+		CBreakPoints::SetSkipFirst(BREAKPOINT_EE, r5900Debug.getPC());
+		CBreakPoints::SetSkipFirst(BREAKPOINT_IOP, r3000Debug.getPC());
+	}
+	else
+	{
+		event.reason = StopReason::UserPause;
+		event.cpu = BREAKPOINT_EE;
+		event.pc = r5900Debug.getPC();
+	}
+
+	RecordStop(event);
+}
+
+void DebuggerControl::OnVMResumed()
+{
+	// Resuming is not a stop, so there is nothing to record. Present so the VMManager hook
+	// is symmetrical and resume-side state has an obvious home if it is ever needed.
+}
+
+void DebuggerControl::OnVMShutdown()
+{
+	StopEvent event;
+	event.reason = StopReason::VMShutdown;
+	RecordStop(event);
+}
+
 void DebuggerControl::ResetForTesting()
 {
 	std::lock_guard lock(s_mutex);

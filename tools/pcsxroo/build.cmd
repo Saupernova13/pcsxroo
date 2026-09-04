@@ -33,6 +33,11 @@ if not exist "%REPO%\deps\lib\cmake\Qt6\Qt6Config.cmake" (
 
 if not defined VSINSTALLDIR call "%VS%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
 
+rem The "unittests" target runs ctest as a post-build step, and core_test links the
+rem emulator core, which needs runtime DLLs that CMake does not copy next to the test
+rem binary. Without these the test process dies at load time with a bare 0xc0000135.
+set "PATH=%REPO%\deps\bin;%REPO%\3rdparty\winpixeventruntime\bin;%PATH%"
+
 cd /d "%REPO%" || exit /b 1
 
 if not exist "%REPO%\build\CMakeCache.txt" (

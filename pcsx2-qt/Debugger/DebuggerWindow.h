@@ -6,6 +6,7 @@
 #include "ui_DebuggerWindow.h"
 
 #include "DebugTools/DebugInterface.h"
+#include "DebugTools/DebuggerControl.h"
 
 #include <kddockwidgets/MainWindow.h>
 #include <QtCore/QTimer>
@@ -67,6 +68,9 @@ protected:
 
 private:
 	DebugInterface* currentCPU();
+
+	// Shared by the three step actions; the logic itself lives in DebuggerControl.
+	void step(DebuggerControl::StepMode mode);
 
 	Ui::DebuggerWindow m_ui;
 

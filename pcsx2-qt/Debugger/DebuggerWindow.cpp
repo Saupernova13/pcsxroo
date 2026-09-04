@@ -9,6 +9,7 @@
 
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
+#include "DebugTools/DebuggerControl.h"
 #include "DebugTools/MIPSAnalyst.h"
 #include "DebugTools/MipsStackWalk.h"
 #include "DebugTools/SymbolImporter.h"
@@ -366,28 +367,18 @@ void DebuggerWindow::onVMPaused()
 	m_ui.actionStepOver->setEnabled(true);
 	m_ui.actionStepOut->setEnabled(true);
 
-	if (CBreakPoints::GetBreakpointTriggered())
+	// DebuggerControl::OnVMPaused has already cleared the temporary breakpoints, reset the
+	// triggered flag and set skip-first, so the CBreakPoints state read here is spent. Ask
+	// it what stopped us instead. That bookkeeping moved into the core because none of it
+	// ran when this window was closed.
+	const DebuggerControl::StopEvent stop = DebuggerControl::GetLastStop();
+	if (stop.reason == DebuggerControl::StopReason::Breakpoint ||
+		stop.reason == DebuggerControl::StopReason::Step)
 	{
-		// Select a layout tab corresponding to the CPU that triggered the
-		// breakpoint and make it start blinking unless said breakpoint was
-		// generated as a result of stepping.
-		const BreakPointCpu cpu_type = CBreakPoints::GetBreakpointTriggeredCpu();
-		if (cpu_type == BREAKPOINT_EE || cpu_type == BREAKPOINT_IOP)
-		{
-			DebugInterface& cpu = DebugInterface::get(cpu_type);
-			bool blink_tab = !CBreakPoints::IsSteppingBreakPoint(cpu_type, cpu.getPC());
-			m_dock_manager->switchToLayoutWithCPU(cpu_type, blink_tab);
-		}
-
-		Host::RunOnCPUThread([] {
-			CBreakPoints::ClearTemporaryBreakPoints();
-			CBreakPoints::SetBreakpointTriggered(false, BREAKPOINT_IOP_AND_EE);
-
-			// Our current PC is on a breakpoint.
-			// When we run the core again, we want to skip this breakpoint and run.
-			CBreakPoints::SetSkipFirst(BREAKPOINT_EE, r5900Debug.getPC());
-			CBreakPoints::SetSkipFirst(BREAKPOINT_IOP, r3000Debug.getPC());
-		});
+		// Select a layout tab corresponding to the CPU that triggered the breakpoint and
+		// make it start blinking, unless the breakpoint came from stepping.
+		const bool blink_tab = stop.reason != DebuggerControl::StopReason::Step;
+		m_dock_manager->switchToLayoutWithCPU(stop.cpu, blink_tab);
 	}
 
 	// Stops us from telling the disassembly view to jump somwhere because
@@ -445,137 +436,29 @@ void DebuggerWindow::onRunPause()
 
 void DebuggerWindow::onStepInto()
 {
-	DebugInterface* cpu = currentCPU();
-	if (!cpu)
-		return;
-
-	if (!cpu->isAlive() || !cpu->isCpuPaused())
-		return;
-
-	// Allow the cpu to skip this pc if it is a breakpoint
-	CBreakPoints::SetSkipFirst(cpu->getCpuType(), cpu->getPC());
-
-	const u32 pc = cpu->getPC();
-	const MIPSAnalyst::MipsOpcodeInfo info = MIPSAnalyst::GetOpcodeInfo(cpu, pc);
-
-	u32 bpAddr = pc + 0x4; // Default to the next instruction
-
-	if (info.isBranch)
-	{
-		if (!info.isConditional)
-		{
-			bpAddr = info.branchTarget;
-		}
-		else
-		{
-			if (info.conditionMet)
-			{
-				bpAddr = info.branchTarget;
-			}
-			else
-			{
-				bpAddr = pc + (2 * 4); // Skip branch delay slot
-			}
-		}
-	}
-
-	if (info.isSyscall)
-		bpAddr = info.branchTarget; // Syscalls are always taken
-
-	Host::RunOnCPUThread([cpu, bpAddr] {
-		CBreakPoints::AddBreakPoint(cpu->getCpuType(), bpAddr, true, true, true);
-		cpu->resumeCpu();
-	});
-
-	update();
+	// The branch, delay-slot and stack-walk logic this used to carry now lives in
+	// DebuggerControl, so the debug server steps exactly the way this window does.
+	step(DebuggerControl::StepMode::Into);
 }
 
 void DebuggerWindow::onStepOver()
 {
-	DebugInterface* cpu = currentCPU();
-	if (!cpu)
-		return;
-
-	if (!cpu->isAlive() || !cpu->isCpuPaused())
-		return;
-
-	const u32 pc = cpu->getPC();
-	const MIPSAnalyst::MipsOpcodeInfo info = MIPSAnalyst::GetOpcodeInfo(cpu, pc);
-
-	u32 bpAddr = pc + 0x4; // Default to the next instruction
-
-	if (info.isBranch)
-	{
-		if (!info.isConditional)
-		{
-			if (info.isLinkedBranch) // jal, jalr
-			{
-				// it's a function call with a delay slot - skip that too
-				bpAddr += 4;
-			}
-			else // j, ...
-			{
-				// in case of absolute branches, set the breakpoint at the branch target
-				bpAddr = info.branchTarget;
-			}
-		}
-		else // beq, ...
-		{
-			if (info.conditionMet)
-			{
-				bpAddr = info.branchTarget;
-			}
-			else
-			{
-				bpAddr = pc + (2 * 4); // Skip branch delay slot
-			}
-		}
-	}
-
-	Host::RunOnCPUThread([cpu, bpAddr] {
-		CBreakPoints::AddBreakPoint(cpu->getCpuType(), bpAddr, true, true, true);
-		cpu->resumeCpu();
-	});
-
-	update();
+	step(DebuggerControl::StepMode::Over);
 }
 
 void DebuggerWindow::onStepOut()
+{
+	step(DebuggerControl::StepMode::Out);
+}
+
+void DebuggerWindow::step(DebuggerControl::StepMode mode)
 {
 	DebugInterface* cpu = currentCPU();
 	if (!cpu)
 		return;
 
-	if (!cpu->isAlive() || !cpu->isCpuPaused())
-		return;
-
-	// Allow the cpu to skip this pc if it is a breakpoint
-	CBreakPoints::SetSkipFirst(cpu->getCpuType(), cpu->getPC());
-
-	std::vector<MipsStackWalk::StackFrame> stack_frames;
-	for (const auto& thread : cpu->GetThreadList())
-	{
-		if (thread->Status() == ThreadStatus::THS_RUN)
-		{
-			stack_frames = MipsStackWalk::Walk(
-				cpu,
-				cpu->getPC(),
-				cpu->getRegister(0, 31),
-				cpu->getRegister(0, 29),
-				thread->EntryPoint());
-			break;
-		}
-	}
-
-	if (stack_frames.size() < 2)
-		return;
-
-	u32 breakpoint_pc = stack_frames.at(1).pc;
-
-	Host::RunOnCPUThread([cpu, breakpoint_pc] {
-		CBreakPoints::AddBreakPoint(cpu->getCpuType(), breakpoint_pc, true, true, true);
-		cpu->resumeCpu();
-	});
+	const BreakPointCpu cpu_type = cpu->getCpuType();
+	Host::RunOnCPUThread([cpu_type, mode] { DebuggerControl::Step(cpu_type, mode); });
 
 	update();
 }
