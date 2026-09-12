@@ -4,9 +4,9 @@
 writes this variable", which is the only way in when the consumers are reached
 through function pointers - as BT3's input readers are.
 
-    python tools/dataxref.py 33398C
-    python tools/dataxref.py 333988-333994 --group
-    python tools/dataxref.py 33398C --in 200000-2C0000 --context 6
+    python tools/pcsxroo/dataxref.py 33398C
+    python tools/pcsxroo/dataxref.py 333988-333994 --group
+    python tools/pcsxroo/dataxref.py 33398C --in 200000-2C0000 --context 6
 """
 
 import argparse
@@ -42,7 +42,9 @@ def main() -> int:
 
     mem = EEMemory.from_state(args.state or config.latest_state())
     lo, hi = parse_range(args.target)
-    scope = parse_range(args.scope) if args.scope else (config.TEXT_BASE, config.TEXT_END)
+    scope = parse_range(args.scope) if args.scope else (
+        config.require_identity().text_base, config.require_identity().text_end
+    )
 
     refs = data_refs(mem, lo, hi, *scope)
     if args.stores:

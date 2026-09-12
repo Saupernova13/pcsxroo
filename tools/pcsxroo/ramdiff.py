@@ -4,13 +4,13 @@ Replaces the PCSX2 GUI memory searcher. Capture a save state per condition,
 then filter the whole 32 MB image at once.
 
     # something that is 2 in state A and 1 in state B (framerate stride)
-    python tools/ramdiff.py a.p2s b.p2s --value 0:2 --value 1:1
+    python tools/pcsxroo/ramdiff.py a.p2s b.p2s --value 0:2 --value 1:1
 
     # a per-frame counter: went up by exactly 1 between two consecutive states
-    python tools/ramdiff.py a.p2s b.p2s --delta 1
+    python tools/pcsxroo/ramdiff.py a.p2s b.p2s --delta 1
 
     # anything that changed at all, as floats
-    python tools/ramdiff.py a.p2s b.p2s --changed --type f32
+    python tools/pcsxroo/ramdiff.py a.p2s b.p2s --changed --type f32
 """
 
 import argparse

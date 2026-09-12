@@ -1,8 +1,8 @@
 """Inspect and adjust the PCSX2 settings this workflow depends on.
 
-    python tools/setup-pcsx2.py                  # report only
-    python tools/setup-pcsx2.py --enable-pine
-    python tools/setup-pcsx2.py --disable-pine
+    python tools/pcsxroo/setup-pcsx2.py                  # report only
+    python tools/pcsxroo/setup-pcsx2.py --enable-pine
+    python tools/pcsxroo/setup-pcsx2.py --disable-pine
 """
 
 import argparse
@@ -63,7 +63,7 @@ def write_setting(path: Path, section: str, key: str, value: str) -> None:
 
 def backup(path: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = config.WORK / "ini-backups" / f"{path.name}.{stamp}"
+    dest = config.SCRATCH_DIR / "ini-backups" / f"{path.name}.{stamp}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, dest)
     return dest
@@ -71,7 +71,6 @@ def backup(path: Path) -> Path:
 
 def report() -> None:
     ini = config.global_ini()
-    game = config.game_ini()
     print(f"PCSX2 dir     {config.pcsx2_dir()}")
     print(f"global ini    {ini}")
     print(f"  EnablePINE               {read_setting(ini, '[EmuCore]', 'EnablePINE')}")
@@ -79,8 +78,9 @@ def report() -> None:
     print(f"  EnableCheats             {read_setting(ini, '[EmuCore]', 'EnableCheats')}")
     print(f"  EnablePatches            {read_setting(ini, '[EmuCore]', 'EnablePatches')}")
     print(f"  EnableWideScreenPatches  {read_setting(ini, '[EmuCore]', 'EnableWideScreenPatches')}")
-    print(f"\ngame ini      {game}")
-    if game.exists():
+    game = config.game_ini() if config.identity else None
+    print(f"\ngame ini      {game or '(no game identity bound)'}")
+    if game and game.exists():
         for line in game.read_text(errors="replace").splitlines():
             if line.strip():
                 print(f"  {line.rstrip()}")

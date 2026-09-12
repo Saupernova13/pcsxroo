@@ -40,10 +40,12 @@ class Region:
 
 # Scanning all 32 MB finds thousands of false positives in uninitialised and
 # stack memory. These are the regions worth scanning by default.
-GAME_REGIONS = [
-    Region(config.DATA_BASE, config.BSS_END, "data+bss"),
-    Region(config.BSS_END, 0x02000000, "heap"),
-]
+def game_regions() -> list[Region]:
+    i = config.require_identity()
+    return [
+        Region(i.data_base, i.bss_end, "data+bss"),
+        Region(i.bss_end, 0x02000000, "heap"),
+    ]
 
 
 class Scan:
@@ -57,7 +59,7 @@ class Scan:
         self.dtype = dtype
         self.np_dtype = DTYPES[dtype]
         self.stride = np.dtype(self.np_dtype).itemsize
-        self.regions = regions if regions is not None else list(GAME_REGIONS)
+        self.regions = regions if regions is not None else game_regions()
 
         self._views = [self._view(s) for s in snapshots]
         self._offsets = self._region_offsets()

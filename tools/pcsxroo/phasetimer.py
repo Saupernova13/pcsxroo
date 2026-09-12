@@ -7,8 +7,8 @@ Those counts are authored in 30Hz frames: how long a charge takes, how long a
 recovery lasts, when a beam is let go. At 60fps every one of them expires in
 half its real time.
 
-    python tools/phasetimer.py
-    python tools/phasetimer.py --sites-only
+    python tools/pcsxroo/phasetimer.py
+    python tools/pcsxroo/phasetimer.py --sites-only
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def main() -> int:
                     help="print just the load address, for tools/mkgate.py")
     args = ap.parse_args()
     elf = ElfImage.load(config.elf_path())
-    rows = list(scan(elf, config.TEXT_BASE, config.TEXT_END))
+    rows = list(scan(elf, config.require_identity().text_base, config.require_identity().text_end))
     for load, step, store, base, named in rows:
         print(f"{load:08X}" if args.sites_only
               else f"{load:08X}  lw/addiu/sw on r{base} (+0x3d8 taken at {named:08X})")

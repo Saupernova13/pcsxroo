@@ -5,8 +5,8 @@ sitting in any lane but the lowest makes its containing word drop by 256 or
 65536 per frame, so a "minus one per frame" test never fires. This re-reads a
 capture as u8, u16 and u32 and reports every lane that ticks down.
 
-    python tools/countdown.py work/captures/grabs.npz
-    python tools/countdown.py work/captures/grabs.npz --width 8 --min-run 4
+    python tools/pcsxroo/countdown.py work/captures/grabs.npz
+    python tools/pcsxroo/countdown.py work/captures/grabs.npz --width 8 --min-run 4
 """
 
 import argparse

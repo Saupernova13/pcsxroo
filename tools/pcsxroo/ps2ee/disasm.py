@@ -95,7 +95,7 @@ def function_start(mem: EEMemory, addr: int, limit: int = 0x4000) -> int:
     ends in 'jr ra' followed by its delay slot.
     """
     at = normalise(addr) & ~3
-    floor = max(config.TEXT_BASE, at - limit)
+    floor = max(config.require_identity().text_base, at - limit)
     while at > floor:
         at -= 4
         if mem.u32(at) == JR_RA:
@@ -106,7 +106,7 @@ def function_start(mem: EEMemory, addr: int, limit: int = 0x4000) -> int:
 def function_end(mem: EEMemory, start: int, limit: int = 0x4000) -> int:
     """Address just past the delay slot of the function's first 'jr ra'."""
     at = normalise(start) & ~3
-    ceiling = min(config.TEXT_END, at + limit)
+    ceiling = min(config.require_identity().text_end, at + limit)
     while at < ceiling:
         if mem.u32(at) == JR_RA:
             return at + 8
@@ -132,8 +132,8 @@ class Xref:
 def callers(
     mem: EEMemory,
     target: int,
-    start: int = config.TEXT_BASE,
-    end: int = config.TEXT_END,
+    start: int | None = None,
+    end: int | None = None,
 ) -> list[Xref]:
     """Direct j/jal sites for a function, plus function-pointer references.
 
@@ -141,6 +141,9 @@ def callers(
     table, callback). The guide calls this the '0 callers group', and it is
     where the interesting main-loop code usually lives.
     """
+    i = config.require_identity()
+    start = i.text_base if start is None else start
+    end = i.text_end if end is None else end
     want_jal = jal_word(target)
     want_j = j_word(target)
     out: list[Xref] = []
@@ -158,8 +161,8 @@ def callers(
 def scan_immediates(
     mem: EEMemory,
     values: dict[int, str],
-    start: int = config.TEXT_BASE,
-    end: int = config.TEXT_END,
+    start: int | None = None,
+    end: int | None = None,
 ) -> list[tuple[int, int, str, str]]:
     """Find li/lui/addiu/ori instructions loading suspect constants.
 
@@ -167,6 +170,9 @@ def scan_immediates(
     so candidates are available before Ghidra finishes auto-analysis. ``values``
     maps an immediate to a human label, e.g. {2: "30fps stride"}.
     """
+    i = config.require_identity()
+    start = i.text_base if start is None else start
+    end = i.text_end if end is None else end
     hits = []
     for addr in range(normalise(start), normalise(end), 4):
         word = mem.u32(addr)
@@ -256,8 +262,8 @@ def data_refs(
     mem: EEMemory,
     lo: int,
     hi: int,
-    start: int = config.TEXT_BASE,
-    end: int = config.TEXT_END,
+    start: int | None = None,
+    end: int | None = None,
 ) -> list[DataRef]:
     """Every instruction that reads, writes or takes the address of [lo, hi).
 
@@ -267,6 +273,10 @@ def data_refs(
     globals that are dispatched through function pointers, following the *data*
     is the only way to find the code that uses them.
     """
+    i = config.require_identity()
+    start = i.text_base if start is None else start
+    end = i.text_end if end is None else end
+    gp = i.gp_base
     lo, hi = normalise(lo), normalise(hi)
     tracked: dict[int, int] = {}
     out: list[DataRef] = []
@@ -282,7 +292,7 @@ def data_refs(
         produced: int | None = None
 
         if op in _MEM_OPS:
-            base = tracked.get(rs, config.GP_BASE if rs == _GP else None)
+            base = tracked.get(rs, gp if rs == _GP else None)
             if base is not None:
                 record(addr, _MEM_OPS[op][0], base + _signed16(imm), word)
         elif op in (0x09, 0x19) and rs in tracked:          # addiu / daddiu

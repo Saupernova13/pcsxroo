@@ -5,8 +5,8 @@ ones a scripted sequence actually keeps time by: load a field, add one, store
 it back. Every one of them counts ticks, so every one of them runs at double
 speed once the battle loop runs at 60Hz.
 
-    python tools/tickcount.py                    # every site
-    python tools/tickcount.py --addrs-only
+    python tools/pcsxroo/tickcount.py                    # every site
+    python tools/pcsxroo/tickcount.py --addrs-only
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ def scan(elf: ElfImage, lo: int, hi: int):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--lo", default=f"{config.TEXT_BASE:x}")
-    ap.add_argument("--hi", default=f"{config.TEXT_END:x}")
+    ap.add_argument("--lo", default=f"{config.require_identity().text_base:x}")
+    ap.add_argument("--hi", default=f"{config.require_identity().text_end:x}")
     ap.add_argument("--addrs-only", action="store_true")
     args = ap.parse_args()
     elf = ElfImage.load(config.elf_path())

@@ -9,7 +9,7 @@ Distinct PCs matter more than hit counts, so this keeps collecting until it has
 seen ``--hits`` stops and reports the set. ``ra`` comes with each one - these
 are leaf calls into a vector library, so the caller is the interesting half.
 
-    python tools/writers.py 0x01871CD0 --size 16 --slot 2 --hits 40
+    python tools/pcsxroo/writers.py 0x01871CD0 --size 16 --slot 2 --hits 40
 
 PCSX2's memchecks do not observe every write path, so silence is not proof.
 A range that stays quiet while the value provably changes means the write is

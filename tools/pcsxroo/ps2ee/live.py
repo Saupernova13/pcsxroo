@@ -168,12 +168,15 @@ class LiveSession:
         problem = delay_slot_hazard(self.pine.read(hook), self.pine.read(hook + 4), hook)
         if problem and not allow_hazard:
             raise InstallError(problem)
-        if not (config.SAFE_ZONE <= base < config.SAFE_ZONE + config.SAFE_ZONE_SIZE):
+        ident = config.require_identity()
+        zone = ident.safe_zone
+        zone_size = ident.safe_zone_size
+        if not (zone <= base < zone + zone_size):
             raise InstallError(f"{base:08X} is outside the safe zone")
 
         words = assemble(source, base)
         end = base + len(words) * 4
-        if end > config.SAFE_ZONE + config.SAFE_ZONE_SIZE:
+        if end > zone + zone_size:
             raise InstallError("trampoline runs past the end of the safe zone")
 
         # Resuming at hook+4 runs the delay-slot instruction a second time,

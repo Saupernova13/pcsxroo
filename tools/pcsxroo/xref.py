@@ -4,8 +4,8 @@ Zero direct callers means the function is reached indirectly - a vtable, jump
 table or callback. That is the guide's '0 callers group', where the main-loop
 code usually lives.
 
-    python tools/xref.py 264D98
-    python tools/xref.py --resolve 264DBC     # find the enclosing function first
+    python tools/pcsxroo/xref.py 264D98
+    python tools/pcsxroo/xref.py --resolve 264DBC     # find the enclosing function first
 """
 
 import argparse

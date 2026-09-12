@@ -6,8 +6,8 @@ cannot simply be halved in place. Each site instead jumps to six words that
 build 0.5 in the destination register - safe, because the destination is about
 to be overwritten anyway - and add that instead.
 
-    python tools/mkhalf.py 00184E3C,00184ECC --base F0C00
-    python tools/mkhalf.py --file work/sites.txt --base F0C00
+    python tools/pcsxroo/mkhalf.py 00184E3C,00184ECC --base F0C00
+    python tools/pcsxroo/mkhalf.py --file work/sites.txt --base F0C00
 """
 
 from __future__ import annotations

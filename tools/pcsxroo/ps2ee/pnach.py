@@ -181,15 +181,12 @@ class Pnach:
                         )
                 if line.cpu == "EE":
                     addr = line.target & 0x01FFFFFF
+                    i = config.require_identity()
                     if addr >= config.EE_RAM_SIZE:
                         problems.append(f"{where}: address beyond 32 MB of EE RAM")
-                    in_text = config.TEXT_BASE <= addr < config.TEXT_END
-                    in_safe = (
-                        config.SAFE_ZONE
-                        <= addr
-                        < config.SAFE_ZONE + config.SAFE_ZONE_SIZE
-                    )
-                    in_data = config.DATA_BASE <= addr < config.BSS_END
+                    in_text = i.text_base <= addr < i.text_end
+                    in_safe = i.safe_zone <= addr < i.safe_zone + i.safe_zone_size
+                    in_data = i.data_base <= addr < i.bss_end
                     if not (in_text or in_safe or in_data):
                         problems.append(
                             f"{where}: {addr:08X} is outside .text, .data and the safe zone"
@@ -228,7 +225,7 @@ def deploy(
     if problems:
         raise ValueError("refusing to deploy an invalid pnach:\n  " + "\n  ".join(problems))
 
-    dest = dest or (config.cheats_dir() / f"{config.CRC}.pnach")
+    dest = dest or (config.cheats_dir() / f"{config.require_identity().crc}.pnach")
     pnach.save(dest)
 
     names = enable if enable is not None else [g.name for g in pnach.groups]

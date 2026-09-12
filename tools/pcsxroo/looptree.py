@@ -4,9 +4,9 @@ The unscoped radar returns thousands of hits. Scoping it to the functions a
 specific loop actually reaches is what makes the heuristic usable - the same
 idea as the Ghidra script's main-loop tree, done locally and fast.
 
-    python tools/looptree.py 12BBD0 --depth 4
-    python tools/looptree.py 12BBD0 --depth 4 --scan
-    python tools/looptree.py 12BBD0 --scan --only-floats --exclude 2BF588
+    python tools/pcsxroo/looptree.py 12BBD0 --depth 4
+    python tools/pcsxroo/looptree.py 12BBD0 --depth 4 --scan
+    python tools/pcsxroo/looptree.py 12BBD0 --scan --only-floats --exclude 2BF588
 """
 
 import argparse
@@ -24,7 +24,7 @@ JR_RA = 0x03E00008
 def function_span(mem: EEMemory, entry: int, limit: int = 0x8000) -> tuple[int, int]:
     """Entry to just past the end, ending at 'jr ra' or an outbound tail jump."""
     at = entry
-    ceiling = min(config.TEXT_END, entry + limit)
+    ceiling = min(config.require_identity().text_end, entry + limit)
     while at < ceiling:
         word = mem.u32(at)
         if word == JR_RA:
@@ -46,7 +46,7 @@ def calls_from(mem: EEMemory, entry: int) -> tuple[set[int], int]:
         op = word >> 26
         if op in (0x02, 0x03):
             target = jump_target(word, at)
-            if target is not None and config.TEXT_BASE <= target < config.TEXT_END:
+            if target is not None and config.require_identity().text_base <= target < config.require_identity().text_end:
                 targets.add(target)
     return targets, end - start
 

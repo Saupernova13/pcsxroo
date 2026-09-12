@@ -5,9 +5,9 @@ reimplemented so candidates exist before Ghidra finishes auto-analysis. The
 Ghidra script remains the authority: it has function names and call graphs,
 which this does not. Use this to get moving, then confirm in Ghidra.
 
-    python tools/radar.py                        # whole .text
-    python tools/radar.py --near 102034 --span 2000
-    python tools/radar.py --floats-only
+    python tools/pcsxroo/radar.py                        # whole .text
+    python tools/pcsxroo/radar.py --near 102034 --span 2000
+    python tools/pcsxroo/radar.py --floats-only
 """
 
 import argparse
@@ -62,7 +62,7 @@ def main() -> int:
         values.update(FLOAT_VALUES)
 
     mem = EEMemory.from_state(args.state or config.latest_state())
-    start, end = config.TEXT_BASE, config.TEXT_END
+    start, end = config.require_identity().text_base, config.require_identity().text_end
     if args.near:
         centre = int(args.near, 16)
         span = int(args.span, 16)

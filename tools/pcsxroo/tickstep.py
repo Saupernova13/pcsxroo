@@ -11,9 +11,9 @@ Scope is approximated by `jr $ra`: everything between two returns is treated as
 one function, which is what the compiler's layout gives here. Calls clobber the
 caller-saved half of the FP file, so those registers are dropped at every jal.
 
-    python tools/tickstep.py                     # every site
-    python tools/tickstep.py --lo 184000 --hi 187000
-    python tools/tickstep.py --addrs-only
+    python tools/pcsxroo/tickstep.py                     # every site
+    python tools/pcsxroo/tickstep.py --lo 184000 --hi 187000
+    python tools/pcsxroo/tickstep.py --addrs-only
 """
 
 from __future__ import annotations
@@ -113,8 +113,8 @@ def confirm(elf: ElfImage, addr: int, dest: int, place: tuple[int, int], span: i
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--lo", default=f"{config.TEXT_BASE:x}")
-    ap.add_argument("--hi", default=f"{config.TEXT_END:x}")
+    ap.add_argument("--lo", default=f"{config.require_identity().text_base:x}")
+    ap.add_argument("--hi", default=f"{config.require_identity().text_end:x}")
     ap.add_argument("--addrs-only", action="store_true")
     args = ap.parse_args()
     elf = ElfImage.load(config.elf_path())

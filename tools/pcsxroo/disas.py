@@ -1,8 +1,8 @@
 """Disassemble EE code around one or more addresses.
 
-    python tools/disas.py 264DBC 1DCB40
-    python tools/disas.py --func 264DBC          # whole containing function
-    python tools/disas.py --source elf 1DCB40    # from the ELF, not a state
+    python tools/pcsxroo/disas.py 264DBC 1DCB40
+    python tools/pcsxroo/disas.py --func 264DBC          # whole containing function
+    python tools/pcsxroo/disas.py --source elf 1DCB40    # from the ELF, not a state
 """
 
 import argparse

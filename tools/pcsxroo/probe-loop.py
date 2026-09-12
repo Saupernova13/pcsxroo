@@ -4,9 +4,9 @@ This is the guide's Step 3 isolation testing, done over PINE so the emulator
 never has to restart. Each experiment is: neutralise one call, you look at the
 game, tell me what changed, we restore and move on.
 
-    python tools/probe-loop.py 12BBD0 --list
-    python tools/probe-loop.py 12BBD0 --nop 6
-    python tools/probe-loop.py 12BBD0 --restore
+    python tools/pcsxroo/probe-loop.py 12BBD0 --list
+    python tools/pcsxroo/probe-loop.py 12BBD0 --nop 6
+    python tools/pcsxroo/probe-loop.py 12BBD0 --restore
 
 Calls whose return value the loop actually uses are marked RISKY and refused
 unless --force is given: blanking those leaves a garbage result in $v0 and can
@@ -23,19 +23,20 @@ from ps2ee.disasm import jump_target
 from ps2ee.eemem import EEMemory
 from ps2ee.pine import Pine, PineNotRunning
 
-STATE = config.WORK / "probe-state.json"
+STATE = config.SCRATCH_DIR / "probe-state.json"
 NOP = 0x00000000
 
 
 def loop_calls(mem: EEMemory, root: int, limit: int = 0x400):
     """Every j/jal inside the loop body, in order."""
+    i = config.require_identity()
     calls = []
     at = root
     while at < root + limit:
         word = mem.u32(at)
         if (word >> 26) in (0x02, 0x03):
             target = jump_target(word, at)
-            if target and config.TEXT_BASE <= target < config.TEXT_END:
+            if target and i.text_base <= target < i.text_end:
                 calls.append((at, target, "jal" if (word >> 26) == 0x03 else "j"))
             if (word >> 26) == 0x02 and target and not (root <= target < at):
                 break     # tail jump out of the function
@@ -139,7 +140,7 @@ def main() -> int:
         if after != NOP:
             print("  WARNING: the write did not stick.")
         print("\nLook at the game and tell me what changed. Then:")
-        print("  python tools/probe-loop.py "
+        print("  python tools/pcsxroo/probe-loop.py "
               f"{args.root} --restore")
     return 0
 

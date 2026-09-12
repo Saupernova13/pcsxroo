@@ -11,8 +11,8 @@ a real instant, so a 30fps run and a 60fps run line up on real time and can be
 compared directly - which is the comparison a player is making when they say
 something is too fast.
 
-    python tools/realclock.py --slot 8 --presets off full
-    python tools/realclock.py --slot 8 --presets full --sheet work/ult.png
+    python tools/pcsxroo/realclock.py --slot 8 --presets off full
+    python tools/pcsxroo/realclock.py --slot 8 --presets full --sheet work/ult.png
 
 --sheet tiles the frames into one image, labelled in seconds. Read the picture:
 a numeric trace tells you when something changed, the tiles tell you what.

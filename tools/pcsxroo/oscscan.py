@@ -25,8 +25,8 @@ Three things this has to get right, each learned by getting it wrong:
   measured window is not an oracle - the same vsync count is half the ticks at
   30fps. Use ``tools/mkstate.py airidle``.
 
-    python tools/oscscan.py --slot 3
-    python tools/oscscan.py --slot 3 --base 0x01870000 --size 0x10000
+    python tools/pcsxroo/oscscan.py --slot 3
+    python tools/pcsxroo/oscscan.py --slot 3 --base 0x01870000 --size 0x10000
 
 This is the instrument that found the tween system: an airborne idle's tell was
 a triangle wave with a 12 vsync period at 30fps and 6 at 60fps.

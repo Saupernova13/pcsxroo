@@ -90,9 +90,12 @@ class Trampoline:
 
 
 class SafeZone:
-    """Bump allocator over the guide's 0x000F0000 scratch region."""
+    """Bump allocator over the game's verified-zero scratch region."""
 
-    def __init__(self, base: int = config.SAFE_ZONE, size: int = config.SAFE_ZONE_SIZE):
+    def __init__(self, base: int | None = None, size: int | None = None):
+        i = config.require_identity()
+        base = i.safe_zone if base is None else base
+        size = i.safe_zone_size if size is None else size
         self.base = base
         self.size = size
         self.cursor = base

@@ -1,4 +1,4 @@
-"""Tooling for PS2 60fps patch development against Budokai Tenkaichi 3.
+"""Tooling for PS2 60fps patch development.
 
     from ps2ee import config, EEMemory, Scan, Pnach, Pine
 
