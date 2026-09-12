@@ -17,7 +17,7 @@ import argparse
 
 import _bootstrap  # noqa: F401
 
-from ps2ee.diff import GAME_REGIONS, Region, Scan
+from ps2ee.diff import Region, Scan, game_regions
 
 
 def parse_value(spec: str) -> tuple[int, float]:
@@ -48,7 +48,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=40)
     args = parser.parse_args()
 
-    regions = [Region(0, 0x02000000, "all")] if args.all_ram else GAME_REGIONS
+    regions = [Region(0, 0x02000000, "all")] if args.all_ram else game_regions()
     scan = Scan.from_states(*args.states, dtype=args.type, regions=regions)
     print(f"# {len(args.states)} snapshots, {args.type}, "
           f"{scan.count():,} slots in scope")

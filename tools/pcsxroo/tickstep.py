@@ -113,12 +113,14 @@ def confirm(elf: ElfImage, addr: int, dest: int, place: tuple[int, int], span: i
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--lo", default=f"{config.require_identity().text_base:x}")
-    ap.add_argument("--hi", default=f"{config.require_identity().text_end:x}")
+    ap.add_argument("--lo", default=None)
+    ap.add_argument("--hi", default=None)
     ap.add_argument("--addrs-only", action="store_true")
     args = ap.parse_args()
     elf = ElfImage.load(config.elf_path())
-    lo, hi = int(args.lo, 16) & ~3, int(args.hi, 16) & ~3
+    lo = int(args.lo, 16) if args.lo else config.require_identity().text_base
+    hi = int(args.hi, 16) if args.hi else config.require_identity().text_end
+    lo, hi = lo & ~3, hi & ~3
     rows = [(addr, kind, place)
             for addr, kind, place, dest, _fs in scan(elf, lo, hi)
             if confirm(elf, addr, dest, place)]
