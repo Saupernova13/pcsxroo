@@ -8,7 +8,7 @@ them (game ini paths, save-state discovery, text bounds, the safe zone).
 
 The identity is bound one of two ways:
 
-- automatically, from a ``GAME`` block in ``local.json`` next to the repo root,
+- automatically, from a ``GAME`` block in ``local.json`` next to the tools,
 - programmatically, with ``config.bind(...)`` before any tool runs.
 
 Either way the values themselves live with the consumer, not in this package:
@@ -30,7 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-LOCAL_JSON = REPO / "local.json"
+TOOLS = Path(__file__).resolve().parents[1]      # tools/pcsxroo
+LOCAL_JSON = TOOLS / "local.json"
 
 EE_RAM_SIZE = 32 * 1024 * 1024          # the PS2 spec, not a per-game value
 
@@ -99,7 +100,7 @@ def require_identity() -> GameIdentity:
     return identity
 
 
-SCRATCH_DIR = Path(_setting("SCRATCH_DIR", str(REPO / "work")))
+SCRATCH_DIR = Path(_setting("SCRATCH_DIR", str(TOOLS / "work")))
 
 # --- emulator discovery ----------------------------------------------------
 
