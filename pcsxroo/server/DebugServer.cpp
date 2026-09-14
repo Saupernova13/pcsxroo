@@ -183,16 +183,11 @@ namespace
 		if (!handler)
 			return DebugServerJson::MakeError(request.id, "unknown_command", "no such command: " + request.cmd);
 
-		// One bad command must not take the whole server down, so every handler runs inside
-		// this guard rather than each one being trusted to be exception free.
-		try
-		{
-			return (*handler)(request, connection);
-		}
-		catch (const std::exception& ex)
-		{
-			return DebugServerJson::MakeError(request.id, "internal_error", ex.what());
-		}
+		// Handlers must never throw, and nothing here can catch it if one does: PCSX2 builds with
+		// exceptions disabled (-fno-exceptions, or _HAS_EXCEPTIONS=0 on MSVC), where a try block
+		// does not compile on GCC or Clang and a throw ends the whole emulator. Bad input is
+		// reported through Fail, and nothing that throws on bad input may be called with it.
+		return (*handler)(request, connection);
 	}
 
 	void WriterLoop(std::shared_ptr<Client> client)
