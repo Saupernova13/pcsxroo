@@ -55,6 +55,11 @@ namespace DebuggerControl
 	// agent from blocking forever on a breakpoint that fired before it started waiting.
 	bool WaitForStop(u64 since, u32 timeout_ms, StopEvent& out);
 
+	// While set, WaitForStop returns false at once, and any wait in progress wakes and returns
+	// false. The debug server sets it while it shuts down, so no client's reader thread can
+	// stay blocked in a wait while the server is trying to join it.
+	void SetWaitsCancelled(bool cancelled);
+
 	size_t AddStopCallback(StopCallback callback);
 	void RemoveStopCallback(size_t handle);
 

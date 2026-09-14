@@ -24,20 +24,37 @@
 #include <WinSock2.h>
 #include <ws2tcpip.h>
 using socket_t = SOCKET;
+using pollfd_t = WSAPOLLFD;
 #define PCSXROO_INVALID_SOCKET INVALID_SOCKET
+#define PCSXROO_POLL_READ POLLRDNORM
 #define socket_recv(s, buf, len) recv((s), (char*)(buf), (int)(len), 0)
 #define socket_send(s, buf, len) send((s), (const char*)(buf), (int)(len), 0)
+#define socket_shutdown(s) shutdown((s), SD_BOTH)
 #define socket_close(s) closesocket(s)
+#define socket_poll(fds, count, timeout_ms) WSAPoll((fds), (count), (timeout_ms))
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 using socket_t = int;
+using pollfd_t = pollfd;
 #define PCSXROO_INVALID_SOCKET (-1)
+#define PCSXROO_POLL_READ POLLIN
+// A send to a client that has just disconnected raises SIGPIPE, which would take the whole
+// emulator down. Linux suppresses it per call with MSG_NOSIGNAL; macOS has no such flag and
+// gets SO_NOSIGPIPE on each accepted socket instead.
+#ifdef MSG_NOSIGNAL
+#define PCSXROO_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define PCSXROO_SEND_FLAGS 0
+#endif
 #define socket_recv(s, buf, len) recv((s), (buf), (len), 0)
-#define socket_send(s, buf, len) send((s), (buf), (len), MSG_NOSIGNAL)
+#define socket_send(s, buf, len) send((s), (buf), (len), PCSXROO_SEND_FLAGS)
+#define socket_shutdown(s) shutdown((s), SHUT_RDWR)
 #define socket_close(s) close(s)
+#define socket_poll(fds, count, timeout_ms) poll((fds), (count), (timeout_ms))
 #endif
 
 namespace
@@ -47,10 +64,16 @@ namespace
 	constexpr size_t MAX_LINE_BYTES = 1024 * 1024;
 	constexpr size_t MAX_CLIENTS = 8;
 
+	// How long the accept loop waits for a connection before checking whether to stop.
+	constexpr int ACCEPT_POLL_MS = 250;
+
 	// One connected client. Reader and writer are separate threads so a subscriber stalled
 	// on a full socket buffer cannot hold up whatever produced the event.
 	struct Client final : public DebugServerConnection
 	{
+		// Set once at accept and not closed until both threads have been joined, so they can
+		// use it without a lock. Closing it earlier, from another thread, would let the system
+		// hand the same descriptor to a new connection while these threads still wrote to it.
 		socket_t sock = PCSXROO_INVALID_SOCKET;
 		std::thread reader;
 		std::thread writer;
@@ -93,6 +116,9 @@ namespace
 		client->out_cv.notify_one();
 	}
 
+	// Stops a client's threads without releasing its socket. shutdown wakes a reader blocked
+	// in recv and a writer blocked in send on every platform; close from another thread does
+	// not (on Linux recv stays blocked). The socket is released by JoinAndRelease.
 	void CloseClient(const std::shared_ptr<Client>& client)
 	{
 		{
@@ -101,6 +127,18 @@ namespace
 		}
 
 		client->out_cv.notify_all();
+		socket_shutdown(client->sock);
+	}
+
+	// Never called from the client's own reader or writer.
+	void JoinAndRelease(const std::shared_ptr<Client>& client)
+	{
+		CloseClient(client);
+
+		if (client->reader.joinable())
+			client->reader.join();
+		if (client->writer.joinable())
+			client->writer.join();
 
 		if (client->sock != PCSXROO_INVALID_SOCKET)
 		{
@@ -180,11 +218,7 @@ namespace
 			size_t sent = 0;
 			while (sent < line.size())
 			{
-				const socket_t sock = client->sock;
-				if (sock == PCSXROO_INVALID_SOCKET)
-					return;
-
-				const auto written = socket_send(sock, line.data() + sent, line.size() - sent);
+				const auto written = socket_send(client->sock, line.data() + sent, line.size() - sent);
 				if (written <= 0)
 					return;
 
@@ -202,11 +236,7 @@ namespace
 
 		while (!s_end.load(std::memory_order_acquire))
 		{
-			const socket_t sock = client->sock;
-			if (sock == PCSXROO_INVALID_SOCKET)
-				break;
-
-			const auto received = socket_recv(sock, chunk, sizeof(chunk));
+			const auto received = socket_recv(client->sock, chunk, sizeof(chunk));
 			if (received <= 0)
 				break;
 
@@ -270,14 +300,7 @@ namespace
 		}
 
 		for (const auto& client : finished)
-		{
-			CloseClient(client);
-
-			if (client->reader.joinable())
-				client->reader.join();
-			if (client->writer.joinable())
-				client->writer.join();
-		}
+			JoinAndRelease(client);
 	}
 
 	void AcceptLoop()
@@ -286,16 +309,34 @@ namespace
 
 		while (!s_end.load(std::memory_order_acquire))
 		{
-			const socket_t sock = accept(s_listen_sock, nullptr, nullptr);
-			if (sock == PCSXROO_INVALID_SOCKET)
-			{
-				if (s_end.load(std::memory_order_acquire))
-					break;
+			// Polled with a short timeout rather than blocked in accept: nothing done to a
+			// listening socket from another thread reliably wakes accept everywhere (shutdown
+			// does not on macOS), and Deinitialize has to be able to join this thread. The same
+			// tick reaps finished clients, so their slots free up without a new connection.
+			pollfd_t listener = {};
+			listener.fd = s_listen_sock;
+			listener.events = PCSXROO_POLL_READ;
+			const int ready = socket_poll(&listener, 1, ACCEPT_POLL_MS);
 
+			ReapFinishedClients();
+
+			if (ready < 0)
+			{
+				Threading::Sleep(ACCEPT_POLL_MS); // an interrupted poll must not become a busy loop
 				continue;
 			}
 
-			ReapFinishedClients();
+			if (ready == 0 || s_end.load(std::memory_order_acquire))
+				continue;
+
+			const socket_t sock = accept(s_listen_sock, nullptr, nullptr);
+			if (sock == PCSXROO_INVALID_SOCKET)
+				continue;
+
+#ifdef SO_NOSIGPIPE
+			const int no_sigpipe = 1;
+			setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+#endif
 
 			auto client = std::make_shared<Client>();
 			client->sock = sock;
@@ -357,6 +398,7 @@ bool DebugServer::Initialize(int port)
 
 	s_end.store(false, std::memory_order_release);
 	s_port = port;
+	DebuggerControl::SetWaitsCancelled(false);
 
 #ifdef _WIN32
 	if (!InitializeWinsock())
@@ -421,20 +463,20 @@ void DebugServer::Deinitialize()
 		s_stop_callback = 0;
 	}
 
-	// shutdown() as well as close(), or the accept thread stays blocked.
+	// A client blocked in wait would otherwise keep its reader thread, and so the join below,
+	// busy until its timeout ran out - up to a day for an explicit one.
+	DebuggerControl::SetWaitsCancelled(true);
+
+	// The accept loop polls, so it sees s_end within one tick. The listening socket is closed
+	// only once that thread can no longer be using it.
+	if (s_accept_thread.joinable())
+		s_accept_thread.join();
+
 	if (s_listen_sock != PCSXROO_INVALID_SOCKET)
 	{
-#ifdef _WIN32
-		shutdown(s_listen_sock, SD_BOTH);
-#else
-		shutdown(s_listen_sock, SHUT_RDWR);
-#endif
 		socket_close(s_listen_sock);
 		s_listen_sock = PCSXROO_INVALID_SOCKET;
 	}
-
-	if (s_accept_thread.joinable())
-		s_accept_thread.join();
 
 	std::vector<std::shared_ptr<Client>> clients;
 	{
@@ -443,14 +485,8 @@ void DebugServer::Deinitialize()
 	}
 
 	for (const auto& client : clients)
-	{
-		CloseClient(client);
+		JoinAndRelease(client);
 
-		if (client->reader.joinable())
-			client->reader.join();
-		if (client->writer.joinable())
-			client->writer.join();
-	}
-
+	DebuggerControl::SetWaitsCancelled(false);
 	s_port = -1;
 }

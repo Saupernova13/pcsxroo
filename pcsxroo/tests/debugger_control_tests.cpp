@@ -95,6 +95,30 @@ TEST(DebuggerControl, WaitTimesOutWhenNothingStops)
 	EXPECT_FALSE(DebuggerControl::WaitForStop(0, 50, out));
 }
 
+// The debug server cancels waits while it shuts down, so a client blocked in one cannot keep
+// its reader thread, and the join on it, busy until the wait times out.
+TEST(DebuggerControl, CancelledWaitsReturnAtOnce)
+{
+	DebuggerControl::ResetForTesting();
+
+	std::thread canceller([] {
+		std::this_thread::sleep_for(50ms);
+		DebuggerControl::SetWaitsCancelled(true);
+	});
+
+	DebuggerControl::StopEvent out;
+	const auto start = std::chrono::steady_clock::now();
+	EXPECT_FALSE(DebuggerControl::WaitForStop(0, 5000, out));
+	EXPECT_LT(std::chrono::steady_clock::now() - start, 2000ms);
+	canceller.join();
+
+	EXPECT_FALSE(DebuggerControl::WaitForStop(0, 5000, out)) << "a wait started while cancelled returns at once";
+
+	DebuggerControl::SetWaitsCancelled(false);
+	DebuggerControl::RecordStop(MakeStop(0x100000, 0x100000));
+	EXPECT_TRUE(DebuggerControl::WaitForStop(0, 1000, out)) << "and once uncancelled, waits work again";
+}
+
 TEST(DebuggerControl, CallbacksFireOnEveryStopUntilRemoved)
 {
 	DebuggerControl::ResetForTesting();

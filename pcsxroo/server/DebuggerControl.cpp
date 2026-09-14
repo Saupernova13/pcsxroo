@@ -19,6 +19,7 @@ namespace
 	std::condition_variable s_stop_cv;
 	DebuggerControl::StopEvent s_last_stop;
 	u64 s_next_seq = 1;
+	bool s_waits_cancelled = false;
 
 	struct CallbackEntry
 	{
@@ -81,13 +82,23 @@ bool DebuggerControl::WaitForStop(u64 since, u32 timeout_ms, StopEvent& out)
 {
 	std::unique_lock lock(s_mutex);
 	const bool signalled = s_stop_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-		[since] { return s_last_stop.seq > since; });
+		[since] { return s_last_stop.seq > since || s_waits_cancelled; });
 
-	if (!signalled)
+	if (!signalled || s_last_stop.seq <= since)
 		return false;
 
 	out = s_last_stop;
 	return true;
+}
+
+void DebuggerControl::SetWaitsCancelled(bool cancelled)
+{
+	{
+		std::lock_guard lock(s_mutex);
+		s_waits_cancelled = cancelled;
+	}
+
+	s_stop_cv.notify_all();
 }
 
 size_t DebuggerControl::AddStopCallback(StopCallback callback)
@@ -260,6 +271,8 @@ void DebuggerControl::ResetForTesting()
 	std::lock_guard lock(s_mutex);
 	s_last_stop = StopEvent();
 	s_next_seq = 1;
+	s_waits_cancelled = false;
 	s_callbacks.clear();
 	s_next_callback_handle = 1;
+	s_last_pause_was_internal.store(false, std::memory_order_release);
 }
