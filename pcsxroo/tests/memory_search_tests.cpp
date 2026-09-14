@@ -250,3 +250,32 @@ TEST(MemorySearch, ParsesProtocolNames)
 	EXPECT_EQ(comparison, MemorySearch::Comparison::Unknown);
 	EXPECT_FALSE(MemorySearch::ParseComparison("sideways", comparison));
 }
+
+// With the range ending at the top of the address space, the chunk cursor used to wrap back
+// to zero and scan forever.
+TEST(MemorySearch, ARangeEndingAtTheTopOfMemoryTerminates)
+{
+	BufferMemory memory(0x1000);
+	MemorySearch::Query query = MakeQuery(MemorySearch::Comparison::Eq, 1);
+	query.start = 0xFFFF0000;
+	query.end = 0xFFFFFFFF;
+
+	std::vector<MemorySearch::Hit> hits;
+	std::string error;
+	EXPECT_TRUE(MemorySearch::RunFirstPass(memory, query, hits, error)) << error;
+	EXPECT_TRUE(hits.empty());
+}
+
+TEST(MemorySearch, FilterPassRejectsAValueComparisonWithNoValue)
+{
+	BufferMemory memory(0x1000);
+	const std::vector<MemorySearch::Hit> previous{{0x100010, 0, 0.0}};
+
+	MemorySearch::Query query = MakeQuery(MemorySearch::Comparison::Eq, 0);
+	query.value.clear();
+
+	std::vector<MemorySearch::Hit> out;
+	std::string error;
+	EXPECT_FALSE(MemorySearch::RunFilterPass(memory, query, previous, out, error));
+	EXPECT_FALSE(error.empty());
+}

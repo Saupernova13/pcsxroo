@@ -212,20 +212,21 @@ bool MemorySearch::RunFirstPass(MemoryInterface& memory, const Query& query, std
 	const size_t size = ValueSize(query.type);
 	std::vector<u8> chunk(CHUNK_BYTES + size);
 
-	for (u32 base = query.start; base < query.end;)
+	// 64-bit so that a range ending near the top of the address space cannot wrap the cursor
+	// back to zero, which scanned the whole of memory forever.
+	for (u64 base = query.start; base < query.end;)
 	{
-		const u32 remaining = query.end - base;
+		const u32 remaining = static_cast<u32>(query.end - base);
 		// Overlap by one value so a match straddling a chunk boundary is not missed.
 		const u32 want = std::min<u32>(remaining, static_cast<u32>(CHUNK_BYTES + size - 1));
 
-		if (!memory.ReadBytes(base, chunk.data(), want))
+		if (!memory.ReadBytes(static_cast<u32>(base), chunk.data(), want))
 		{
 			// Unmapped regions are normal in a 32 MiB sweep; skip rather than fail.
-			base += static_cast<u32>(CHUNK_BYTES);
+			base += CHUNK_BYTES;
 			continue;
 		}
 
-		const u32 last = (want >= size) ? (want - static_cast<u32>(size)) : 0;
 		for (u32 offset = 0; offset + size <= want; offset += static_cast<u32>(size))
 		{
 			u64 raw = 0;
@@ -235,13 +236,12 @@ bool MemorySearch::RunFirstPass(MemoryInterface& memory, const Query& query, std
 			if (!MatchesAgainstNeedle(query, raw, numeric, needle_raw, needle_numeric))
 				continue;
 
-			out.push_back({base + offset, raw, numeric});
+			out.push_back({static_cast<u32>(base + offset), raw, numeric});
 			if (out.size() >= query.max_results)
 				return true;
 		}
 
-		(void)last;
-		base += static_cast<u32>(CHUNK_BYTES);
+		base += CHUNK_BYTES;
 	}
 
 	return true;
@@ -263,20 +263,24 @@ bool MemorySearch::RunFilterPass(MemoryInterface& memory, const Query& query, co
 	double needle_numeric = 0.0;
 	const bool has_needle = DecodeNeedle(query, needle_raw, needle_numeric);
 
-	if (NeedsPrevious(query.comparison) && !has_needle)
+	// Only unknown, increased, decreased, changed and not_changed work without a value. The
+	// rest used to compare against zero when the value was missing, and quietly answered a
+	// question nobody asked.
+	switch (query.comparison)
 	{
-		// Increased/Changed/NotChanged do not use the needle, so a missing one is only a
-		// problem for the "by" variants.
-		switch (query.comparison)
-		{
-			case Comparison::IncreasedBy:
-			case Comparison::DecreasedBy:
-			case Comparison::ChangedBy:
+		case Comparison::Unknown:
+		case Comparison::Increased:
+		case Comparison::Decreased:
+		case Comparison::Changed:
+		case Comparison::NotChanged:
+			break;
+		default:
+			if (!has_needle)
+			{
 				error = "this comparison needs a value";
 				return false;
-			default:
-				break;
-		}
+			}
+			break;
 	}
 
 	u8 bytes[8] = {};
