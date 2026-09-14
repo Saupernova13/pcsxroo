@@ -4,6 +4,7 @@
 # PCSXROO's unit tests, as their own ctest target so upstream's core_test is untouched.
 # They link the core like core_test does, and borrow its host stub rather than copying it.
 add_pcsx2_test(pcsxroo_test
+	debug_server_dispatch_tests.cpp
 	debug_server_json_tests.cpp
 	debugger_control_tests.cpp
 	memory_search_tests.cpp
