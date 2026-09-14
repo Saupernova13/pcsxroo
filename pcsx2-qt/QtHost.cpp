@@ -96,6 +96,7 @@ static bool s_test_config_and_exit = false;
 static bool s_run_setup_wizard = false;
 static bool s_cleanup_after_update = false;
 static bool s_boot_and_debug = false;
+// PCSXROO: set by -pauseonentry and -debugserver.
 static bool s_pause_on_entry = false;
 static std::optional<int> s_debug_server_port;
 static std::atomic_int s_vm_locked_with_dialog = 0;
@@ -1538,7 +1539,7 @@ bool Host::RequestResetSettings(bool folders, bool core, bool controllers, bool 
 
 QString QtHost::GetAppNameAndVersion()
 {
-	// The PCSX2 revision stays visible: a crash report from this fork has to remain
+	// PCSXROO: the PCSX2 revision stays visible: a crash report from this fork has to remain
 	// traceable to the upstream commit it was built from.
 	return QString("PCSXROO (PCSX2 %1)").arg(BuildVersion::GitRev);
 }
@@ -2155,6 +2156,7 @@ void QtHost::PrintCommandLineHelp(const std::string_view progname)
 	std::fprintf(stderr, "  -testconfig: Initializes configuration and checks version, then exits.\n");
 	std::fprintf(stderr, "  -setupwizard: Forces initial setup wizard to run.\n");
 	std::fprintf(stderr, "  -debugger: Open debugger and break on entry point.\n");
+	// PCSXROO: the two flags PCSXROO adds.
 	std::fprintf(stderr, "  -pauseonentry: Break on entry point without opening the debugger window.\n");
 	std::fprintf(stderr, "  -debugserver <port>: Start the PCSXROO debug server on the given\n"
 						 "    loopback port. Grants full memory and execution control with no\n"
@@ -2311,7 +2313,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			else if (CHECK_ARG(QStringLiteral("-pauseonentry")))
 			{
-				// Halts at the ELF entry point without opening the debugger window, which
+				// PCSXROO: halts at the ELF entry point without opening the debugger window, which
 				// -debugger would also do. That window is exactly what PCSXROO exists to
 				// make unnecessary.
 				s_pause_on_entry = true;
@@ -2319,6 +2321,7 @@ bool QtHost::ParseCommandLineOptions(const QStringList& args, std::shared_ptr<VM
 			}
 			else if (CHECK_ARG_PARAM(QStringLiteral("-debugserver")))
 			{
+				// PCSXROO: start the debug server on this loopback port.
 				bool port_ok = false;
 				const int port = (++it)->toInt(&port_ok);
 				if (!port_ok || port <= 0 || port > 65535)
@@ -2574,7 +2577,7 @@ int main(int argc, char* argv[])
 	if (s_start_big_picture_mode || Host::GetBaseBoolSettingValue("UI", "StartBigPictureMode", false))
 		g_emu_thread->startFullscreenUI(s_start_fullscreen || Host::GetBaseBoolSettingValue("UI", "StartFullscreen", false));
 
-	// Outside the window check on purpose: -pauseonentry has to halt at the entry point
+	// PCSXROO: outside the window check on purpose: -pauseonentry has to halt at the entry point
 	// without opening any window, which is the whole point of driving this from a CLI.
 	DebugInterface::setPauseOnEntry(s_boot_and_debug || s_pause_on_entry);
 

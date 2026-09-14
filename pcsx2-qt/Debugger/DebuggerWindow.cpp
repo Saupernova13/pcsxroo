@@ -9,7 +9,7 @@
 
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
-#include "pcsxroo/server/DebuggerControl.h"
+#include "pcsxroo/server/DebuggerControl.h" // PCSXROO: step logic shared with the debug server
 #include "DebugTools/MIPSAnalyst.h"
 #include "DebugTools/MipsStackWalk.h"
 #include "DebugTools/SymbolImporter.h"
@@ -367,7 +367,7 @@ void DebuggerWindow::onVMPaused()
 	m_ui.actionStepOver->setEnabled(true);
 	m_ui.actionStepOut->setEnabled(true);
 
-	// DebuggerControl::OnVMPaused has already cleared the temporary breakpoints, reset the
+	// PCSXROO: DebuggerControl::OnVMPaused has already cleared the temporary breakpoints, reset the
 	// triggered flag and set skip-first, so the CBreakPoints state read here is spent. Ask
 	// it what stopped us instead. That bookkeeping moved into the core because none of it
 	// ran when this window was closed.
@@ -375,7 +375,7 @@ void DebuggerWindow::onVMPaused()
 	if (stop.reason == DebuggerControl::StopReason::Breakpoint ||
 		stop.reason == DebuggerControl::StopReason::Step)
 	{
-		// Select a layout tab corresponding to the CPU that triggered the breakpoint and
+		// PCSXROO: select a layout tab corresponding to the CPU that triggered the breakpoint and
 		// make it start blinking, unless the breakpoint came from stepping.
 		const bool blink_tab = stop.reason != DebuggerControl::StopReason::Step;
 		m_dock_manager->switchToLayoutWithCPU(stop.cpu, blink_tab);
@@ -383,7 +383,7 @@ void DebuggerWindow::onVMPaused()
 
 	// Stops us from telling the disassembly view to jump somwhere because
 	// breakpoint code paused the core.
-	// DebuggerControl::OnVMPaused runs first and has already consumed the CBreakPoints
+	// PCSXROO: DebuggerControl::OnVMPaused runs first and has already consumed the CBreakPoints
 	// flag, so ask it rather than reading a flag that is now always false.
 	if (!DebuggerControl::LastPauseWasInternal())
 		emit onVMActuallyPaused();
@@ -436,13 +436,14 @@ void DebuggerWindow::onRunPause()
 
 void DebuggerWindow::onStepInto()
 {
-	// The branch, delay-slot and stack-walk logic this used to carry now lives in
+	// PCSXROO: the branch, delay-slot and stack-walk logic this used to carry now lives in
 	// DebuggerControl, so the debug server steps exactly the way this window does.
 	step(DebuggerControl::StepMode::Into);
 }
 
 void DebuggerWindow::onStepOver()
 {
+	// PCSXROO: see onStepInto.
 	step(DebuggerControl::StepMode::Over);
 }
 
@@ -451,12 +452,14 @@ void DebuggerWindow::onStepOut()
 	step(DebuggerControl::StepMode::Out);
 }
 
+// PCSXROO: the three step actions share this.
 void DebuggerWindow::step(DebuggerControl::StepMode mode)
 {
 	DebugInterface* cpu = currentCPU();
 	if (!cpu)
 		return;
 
+	// PCSXROO: DebuggerControl::Step does the work, on the CPU thread.
 	const BreakPointCpu cpu_type = cpu->getCpuType();
 	Host::RunOnCPUThread([cpu_type, mode] { DebuggerControl::Step(cpu_type, mode); });
 

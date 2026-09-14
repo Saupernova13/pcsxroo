@@ -8,6 +8,7 @@
 #include "Counters.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
+// PCSXROO: debug server lifecycle, held inputs and stop reporting.
 #include "pcsxroo/server/DebugServer.h"
 #include "pcsxroo/server/DebugServerCommands.h"
 #include "pcsxroo/server/DebuggerControl.h"
@@ -138,7 +139,7 @@ namespace VMManager
 	static void ResetResumeTimestamp();
 	static void SaveSessionTime(const std::string& prev_serial);
 	static void ReloadPINE();
-	static void ReloadDebugServer();
+	static void ReloadDebugServer(); // PCSXROO: debug server
 
 	static float GetTargetSpeedForLimiterMode(LimiterModeType mode);
 	static void ResetFrameLimiter();
@@ -162,7 +163,7 @@ static bool s_log_block_system_console = false;
 static bool s_log_force_file_log = false;
 
 static std::atomic<VMState> s_state{VMState::Shutdown};
-// Set once from the -debugserver command line flag; re-applied on every settings load.
+// PCSXROO: set once from the -debugserver command line flag; re-applied on every settings load.
 static std::optional<int> s_debug_server_port_override;
 static bool s_cpu_implementation_changed = false;
 static Threading::ThreadHandle s_vm_thread_handle;
@@ -302,7 +303,7 @@ void VMManager::SetState(VMState state)
 
 		if (paused)
 		{
-			// Before Host::OnVMPaused, so the debugger window observes state that has
+			// PCSXROO: before Host::OnVMPaused, so the debugger window observes state that has
 			// already been cleaned up, and so the bookkeeping still runs with no window.
 			DebuggerControl::OnVMPaused();
 			Host::OnVMPaused();
@@ -310,7 +311,7 @@ void VMManager::SetState(VMState state)
 		}
 		else
 		{
-			DebuggerControl::OnVMResumed();
+			DebuggerControl::OnVMResumed(); // PCSXROO: resume hook
 			FullscreenUI::OnVMResumed();
 			Host::OnVMResumed();
 			ResetResumeTimestamp();
@@ -322,7 +323,7 @@ void VMManager::SetState(VMState state)
 		Cpu->ExitExecution();
 	}
 
-	// Deliberately not folded into the branch above, which only fires when the VM was
+	// PCSXROO: deliberately not folded into the branch above, which only fires when the VM was
 	// running: a debug client blocked waiting for a stop while the VM is paused has to be
 	// released too, or it waits out its full timeout on a VM that is already gone.
 	if (state == VMState::Stopping)
@@ -444,7 +445,7 @@ bool VMManager::Internal::CPUThreadInitialize()
 		Achievements::Initialize();
 
 	ReloadPINE();
-	ReloadDebugServer();
+	ReloadDebugServer(); // PCSXROO: debug server
 
 	if (EmuConfig.EnableDiscordPresence)
 		InitializeDiscordPresence();
@@ -461,7 +462,7 @@ void VMManager::Internal::CPUThreadShutdown()
 	ShutdownDiscordPresence();
 
 	PINEServer::Deinitialize();
-	DebugServer::Deinitialize();
+	DebugServer::Deinitialize(); // PCSXROO: debug server
 
 	Achievements::Shutdown(false);
 
@@ -672,6 +673,7 @@ void VMManager::ReloadInputBindings(bool force)
 	LoadInputBindings(*si, lock);
 }
 
+// PCSXROO: see VMManager.h.
 void VMManager::SetDebugServerPortOverride(int port)
 {
 	s_debug_server_port_override = port;
@@ -683,7 +685,7 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 	EmuConfig.LoadSave(slw);
 	Patch::ApplyPatchSettingOverrides();
 
-	// Applied here, before the hardcore check below, so that -debugserver survives every
+	// PCSXROO: applied here, before the hardcore check below, so that -debugserver survives every
 	// settings reload but still loses to hardcore mode.
 	if (s_debug_server_port_override.has_value())
 	{
@@ -1200,7 +1202,7 @@ void VMManager::UpdateDiscDetails(bool booting)
 	{
 		Achievements::GameChanged(s_disc_crc, s_current_crc);
 		ReloadPINE();
-	ReloadDebugServer();
+		ReloadDebugServer(); // PCSXROO: debug server
 		UpdateDiscordPresence(s_state.load(std::memory_order_relaxed) == VMState::Initializing);
 		FileMcd_Reopen(memcardFilters.empty() ? s_disc_serial : memcardFilters);
 	}
@@ -2980,7 +2982,7 @@ void VMManager::Internal::PollInputOnCPUThread()
 	Host::PumpMessagesOnCPUThread();
 	InputManager::PollSources();
 
-	// After PollSources on purpose: it has just refreshed the pad from the real input
+	// PCSXROO: after PollSources on purpose: it has just refreshed the pad from the real input
 	// sources, so anything written before this point would be overwritten unseen.
 	DebugServerCommands::ApplyHeldInputs();
 
@@ -3232,7 +3234,7 @@ void VMManager::EnforceAchievementsChallengeModeSettings()
 	EmuConfig.EnableRecordingTools = false;
 	EmuConfig.EnablePINE = false;
 
-	// The debug server is strictly more powerful than PINE - arbitrary memory writes,
+	// PCSXROO: the debug server is strictly more powerful than PINE - arbitrary memory writes,
 	// breakpoints and execution control - so hardcore mode has to refuse it as well.
 	EmuConfig.EnableDebugServer = false;
 
@@ -3826,6 +3828,7 @@ void VMManager::ReloadPINE()
 		PINEServer::Initialize(EmuConfig.PINESlot);
 }
 
+// PCSXROO: starts, restarts or stops the debug server to match the config.
 void VMManager::ReloadDebugServer()
 {
 	const bool needs_reinit = (EmuConfig.EnableDebugServer != DebugServer::IsInitialized() ||

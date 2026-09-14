@@ -1121,6 +1121,7 @@ target_sources(PCSX2 PRIVATE
 	${pcsx2RecordingSources}
 	${pcsx2DebugToolsSources}
 	${pcsx2DebugToolsHeaders}
+	# PCSXROO: the debug server, from pcsxroo/server
 	${pcsx2DebugServerSources}
 	${pcsx2DebugServerHeaders}
 	${pcsx2HostSources}

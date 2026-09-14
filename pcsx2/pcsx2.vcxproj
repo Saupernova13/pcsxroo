@@ -357,6 +357,7 @@
     <ClCompile Include="IopGte.cpp" />
     <ClCompile Include="LayeredSettingsInterface.cpp" />
     <ClCompile Include="PINE.cpp" />
+    <!-- PCSXROO: debug server -->
     <ClCompile Include="..\pcsxroo\server\MemorySearch.cpp" />
     <ClCompile Include="..\pcsxroo\server\DebugServerDispatch.cpp" />
     <ClCompile Include="..\pcsxroo\server\DebugServerCommands.cpp" />
@@ -811,6 +812,7 @@
     <ClInclude Include="IPU\mpeg2_vlc.h" />
     <ClInclude Include="LayeredSettingsInterface.h" />
     <ClInclude Include="PINE.h" />
+    <!-- PCSXROO: debug server -->
     <ClInclude Include="..\pcsxroo\server\MemorySearch.h" />
     <ClInclude Include="..\pcsxroo\server\DebugServerDispatch.h" />
     <ClInclude Include="..\pcsxroo\server\DebugServerCommands.h" />

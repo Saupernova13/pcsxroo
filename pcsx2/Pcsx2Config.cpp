@@ -9,7 +9,7 @@
 #include "common/StringUtil.h"
 #include "common/SmallString.h"
 #include "Config.h"
-#include "pcsxroo/server/DebugServer.h"
+#include "pcsxroo/server/DebugServer.h" // PCSXROO: default debug server port
 #include "GS.h"
 #include "CDVD/CDVDcommon.h"
 #include "Host.h"
@@ -1980,7 +1980,7 @@ Pcsx2Config::Pcsx2Config()
 
 	GzipIsoIndexTemplate = "$(f).pindex.tmp";
 	PINESlot = 28011;
-	DebugServerPort = PCSXROO_DEBUG_SERVER_DEFAULT_PORT;
+	DebugServerPort = PCSXROO_DEBUG_SERVER_DEFAULT_PORT; // PCSXROO: debug server
 	RtcYear = 0;
 	RtcMonth = 1;
 	RtcDay = 1;
@@ -1999,7 +1999,7 @@ void Pcsx2Config::LoadSaveCore(SettingsWrapper& wrap)
 	SettingsWrapBitBool(EnablePatches);
 	SettingsWrapBitBool(EnableCheats);
 	SettingsWrapBitBool(EnablePINE);
-	SettingsWrapBitBool(EnableDebugServer);
+	SettingsWrapBitBool(EnableDebugServer); // PCSXROO: debug server
 	SettingsWrapBitBool(EnableWideScreenPatches);
 	SettingsWrapBitBool(EnableNoInterlacingPatches);
 	SettingsWrapBitBool(EnableFastBoot);
@@ -2038,7 +2038,7 @@ void Pcsx2Config::LoadSaveCore(SettingsWrapper& wrap)
 
 	SettingsWrapEntry(GzipIsoIndexTemplate);
 	SettingsWrapEntry(PINESlot);
-	SettingsWrapEntry(DebugServerPort);
+	SettingsWrapEntry(DebugServerPort); // PCSXROO: debug server
 	SettingsWrapEntry(RtcYear);
 	SettingsWrapEntry(RtcMonth);
 	SettingsWrapEntry(RtcDay);

@@ -13,6 +13,7 @@
   <property name="acceptDrops">
    <bool>true</bool>
   </property>
+  <!-- PCSXROO: fork branding -->
   <property name="windowTitle">
    <string>PCSXROO</string>
   </property>

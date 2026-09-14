@@ -753,6 +753,7 @@
     <ClCompile Include="DebugTools\Breakpoints.cpp">
       <Filter>System\Ps2\Debug</Filter>
     </ClCompile>
+    <!-- PCSXROO: debug server -->
     <ClCompile Include="..\pcsxroo\server\DebuggerControl.cpp">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClCompile>
@@ -816,6 +817,7 @@
     <ClCompile Include="PINE.cpp">
       <Filter>System</Filter>
     </ClCompile>
+    <!-- PCSXROO: debug server -->
     <ClCompile Include="..\pcsxroo\server\MemorySearch.cpp">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClCompile>
@@ -1689,6 +1691,7 @@
     <ClInclude Include="DebugTools\Breakpoints.h">
       <Filter>System\Ps2\Debug</Filter>
     </ClInclude>
+    <!-- PCSXROO: debug server -->
     <ClInclude Include="..\pcsxroo\server\DebuggerControl.h">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClInclude>
@@ -1737,6 +1740,7 @@
     <ClInclude Include="PINE.h">
       <Filter>System\Include</Filter>
     </ClInclude>
+    <!-- PCSXROO: debug server -->
     <ClInclude Include="..\pcsxroo\server\MemorySearch.h">
       <Filter>System\Ps2\DebugServer</Filter>
     </ClInclude>
