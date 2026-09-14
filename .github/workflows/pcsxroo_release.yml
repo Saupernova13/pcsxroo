@@ -45,9 +45,7 @@ jobs:
       jobName: "AppImage Build"
       artifactPrefixName: "PCSXROO-linux-x64-appimage"
       compiler: clang
-      # appimage-qt.sh packages build/bin/pcsx2-qt, so the executable inside the AppImage keeps
-      # PCSX2's name. The AppImage file itself is named for PCSXROO below.
-      cmakeflags: "-DPCSX2_EXE_NAME=pcsx2-qt"
+      cmakeflags: ""
       buildAppImage: true
       fetchTags: true
     secrets: inherit

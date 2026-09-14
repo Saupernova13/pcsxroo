@@ -160,8 +160,9 @@ ninja -C build unittests
 build/bin/pcsxroo launch
 ```
 
-The emulator and the CLI both land in `build/bin/`, so `launch` finds `pcsxroo-qt` beside
-itself.
+The emulator and the CLI both land in `build/bin/`, so `launch` finds the emulator beside
+itself. On Linux it keeps PCSX2's name, `pcsx2-qt`, which the AppImage and Flatpak packaging
+run by name; only Windows builds are called `pcsxroo-qt`.
 
 **macOS.** Install Xcode, then `brew install cmake ninja nasm`, then:
 

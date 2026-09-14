@@ -29,8 +29,9 @@
 namespace
 {
 	// The emulator is expected beside this executable, which is how an installed PCSXROO is
-	// laid out. pcsx2-qt is accepted too: it is what a build without the fork's CMake rename
-	// (an MSBuild one, say) produces, and the server inside it is the same.
+	// laid out. Windows builds name it pcsxroo-qt; Linux builds keep PCSX2's pcsx2-qt, which
+	// the AppImage and Flatpak packaging run by name. The other name is tried as well, for a
+	// build configured differently. The server inside is the same either way.
 	std::string FindEmulator(std::string& tried)
 	{
 		const std::string dir(Path::GetDirectory(FileSystem::GetProgramPath()));
@@ -38,7 +39,7 @@ namespace
 #ifdef _WIN32
 		static constexpr const char* names[] = {"pcsxroo-qt.exe", "pcsx2-qt.exe"};
 #else
-		static constexpr const char* names[] = {"pcsxroo-qt", "pcsx2-qt"};
+		static constexpr const char* names[] = {"pcsx2-qt", "pcsxroo-qt"};
 #endif
 
 		for (const char* name : names)

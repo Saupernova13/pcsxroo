@@ -6,10 +6,13 @@ set(CMAKE_AUTOUIC ON)
 
 add_executable(pcsx2-qt)
 
-# PCSXROO: the fork ships as its own binary so it is distinguishable from a stock PCSX2 in a
-# task list, a window title and a crash dump. The CMake target keeps the upstream
-# name to avoid churn through the rest of the build files.
-set_target_properties(pcsx2-qt PROPERTIES OUTPUT_NAME "pcsxroo-qt")
+# PCSXROO: on Windows the fork ships as its own binary, so it is distinguishable from a stock
+# PCSX2 in a task list and a crash dump. Windows only: the Linux AppImage and Flatpak packaging
+# run pcsx2-qt by name, and macOS names its bundle PCSX2 whatever this says. The CMake target
+# keeps the upstream name to avoid churn through the rest of the build files.
+if(WIN32)
+	set_target_properties(pcsx2-qt PROPERTIES OUTPUT_NAME "pcsxroo-qt")
+endif()
 
 target_sources(pcsx2-qt PRIVATE
 	AboutDialog.cpp
