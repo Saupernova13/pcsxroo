@@ -13,22 +13,35 @@
 #include <fmt/format.h>
 
 #include <chrono>
-#include <cstdlib>
 #include <thread>
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
+#else
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace
 {
 	// The emulator is expected beside this executable, which is how an installed PCSXROO is
-	// laid out. Both names are tried so the CLI keeps working before the rebrand lands.
+	// laid out. pcsx2-qt is accepted too: it is what a build without the fork's CMake rename
+	// (an MSBuild one, say) produces, and the server inside it is the same.
 	std::string FindEmulator(std::string& tried)
 	{
 		const std::string dir(Path::GetDirectory(FileSystem::GetProgramPath()));
 
-		for (const char* name : {"pcsxroo-qt.exe", "pcsx2-qt.exe", "pcsxroo-qt", "pcsx2-qt"})
+#ifdef _WIN32
+		static constexpr const char* names[] = {"pcsxroo-qt.exe", "pcsx2-qt.exe"};
+#else
+		static constexpr const char* names[] = {"pcsxroo-qt", "pcsx2-qt"};
+#endif
+
+		for (const char* name : names)
 		{
 			const std::string candidate = Path::Combine(dir, name);
 			if (FileSystem::FileExists(candidate.c_str()))
@@ -42,6 +55,54 @@ namespace
 
 		return {};
 	}
+
+	std::vector<std::string> EmulatorArguments(const std::string& emulator, const PcsxrooLaunch::Options& options)
+	{
+		std::vector<std::string> args{emulator, "-debugserver", std::to_string(options.port)};
+		if (options.pause_on_entry)
+			args.push_back("-pauseonentry");
+
+		// With no game, the emulator comes up idle with the server listening and no VM. That is
+		// deliberately not the same as booting the BIOS: starting the emulator and starting a
+		// VM fail for different reasons, and an agent that cannot tell them apart is stuck.
+		if (options.boot_bios)
+		{
+			args.push_back("-bios");
+		}
+		else if (!options.game.empty())
+		{
+			args.push_back("-batch");
+			args.push_back(options.game);
+		}
+
+		return args;
+	}
+
+#ifdef _WIN32
+	// Quotes one argument so that CommandLineToArgvW, which is how the emulator splits its
+	// command line, hands it back unchanged: backslashes are literal except before a quote.
+	std::string QuoteArgument(const std::string& arg)
+	{
+		std::string out = "\"";
+		size_t backslashes = 0;
+		for (const char c : arg)
+		{
+			if (c == '\\')
+			{
+				backslashes++;
+				continue;
+			}
+
+			out.append(c == '"' ? backslashes * 2 + 1 : backslashes, '\\');
+			backslashes = 0;
+			out += c;
+		}
+
+		out.append(backslashes * 2, '\\');
+		out += '"';
+		return out;
+	}
+#endif
 } // namespace
 
 bool PcsxrooLaunch::ParseOptions(std::vector<std::string>& argv, int port, Options& out, std::string& error)
@@ -59,9 +120,9 @@ bool PcsxrooLaunch::ParseOptions(std::vector<std::string>& argv, int port, Optio
 	if (PcsxrooArgs::TakeOption(argv, "--ready-timeout", value, error))
 	{
 		u64 timeout = 0;
-		if (!PcsxrooArgs::ParseNumber(value, timeout))
+		if (!PcsxrooArgs::ParseNumber(value, timeout) || timeout == 0 || timeout > MAX_READY_TIMEOUT_MS)
 		{
-			error = "invalid --ready-timeout";
+			error = fmt::format("--ready-timeout must be between 1 and {} ms", MAX_READY_TIMEOUT_MS);
 			return false;
 		}
 
@@ -72,8 +133,29 @@ bool PcsxrooLaunch::ParseOptions(std::vector<std::string>& argv, int port, Optio
 		return false;
 	}
 
+	for (const std::string& argument : argv)
+	{
+		if (argument.size() > 1 && argument[0] == '-' && argument[1] == '-')
+		{
+			error = "unknown launch option: " + argument;
+			return false;
+		}
+	}
+
+	if (argv.size() > 1)
+	{
+		error = "launch takes at most one game path; unexpected " + argv[1];
+		return false;
+	}
+
 	if (!argv.empty())
 		out.game = argv[0];
+
+	if (out.boot_bios && !out.game.empty())
+	{
+		error = "pass either a game path or --bios, not both";
+		return false;
+	}
 
 	return true;
 }
@@ -98,24 +180,23 @@ bool PcsxrooLaunch::Run(const Options& options, u64& pid, std::string& error)
 		return false;
 	}
 
-	std::string arguments = fmt::format("\"{}\" -debugserver {}", emulator, options.port);
-	if (options.pause_on_entry)
-		arguments += " -pauseonentry";
-
-	// With no game, the emulator comes up idle with the server listening and no VM. That is
-	// deliberately not the same as booting the BIOS: starting the emulator and starting a VM
-	// fail for different reasons, and an agent that cannot tell them apart is stuck.
-	if (options.boot_bios)
-		arguments += " -bios";
-	else if (!options.game.empty())
-		arguments += fmt::format(" -batch \"{}\"", options.game);
+	std::vector<std::string> args = EmulatorArguments(emulator, options);
 
 #ifdef _WIN32
+	std::string command_line;
+	for (const std::string& arg : args)
+	{
+		if (!command_line.empty())
+			command_line += ' ';
+
+		command_line += QuoteArgument(arg);
+	}
+
 	STARTUPINFOW startup = {};
 	startup.cb = sizeof(startup);
 	PROCESS_INFORMATION process = {};
 
-	std::wstring wide = StringUtil::UTF8StringToWideString(arguments);
+	std::wstring wide = StringUtil::UTF8StringToWideString(command_line);
 	// DETACHED_PROCESS so closing the shell that ran pcsxroo does not take the emulator
 	// with it - an unattended session outlives the terminal that started it.
 	if (!CreateProcessW(nullptr, wide.data(), nullptr, nullptr, FALSE, DETACHED_PROCESS, nullptr, nullptr,
@@ -127,16 +208,68 @@ bool PcsxrooLaunch::Run(const Options& options, u64& pid, std::string& error)
 
 	pid = process.dwProcessId;
 	CloseHandle(process.hThread);
-	CloseHandle(process.hProcess);
+
+	// Kept open only to notice the emulator exiting before its server answers.
+	const auto exited = [&process](std::string& why) {
+		if (WaitForSingleObject(process.hProcess, 0) != WAIT_OBJECT_0)
+			return false;
+
+		DWORD code = 0;
+		GetExitCodeProcess(process.hProcess, &code);
+		why = fmt::format("the emulator exited (code {}) before its debug server answered", code);
+		return true;
+	};
+	const auto release = [&process]() { CloseHandle(process.hProcess); };
 #else
-	arguments += " &";
-	if (std::system(arguments.c_str()) != 0)
+	std::vector<char*> c_args;
+	for (std::string& arg : args)
+		c_args.push_back(arg.data());
+	c_args.push_back(nullptr);
+
+	const pid_t child = fork();
+	if (child < 0)
 	{
-		error = "could not start " + emulator;
+		error = fmt::format("could not start {}: {}", emulator, std::strerror(errno));
 		return false;
 	}
 
-	pid = 0;
+	if (child == 0)
+	{
+		// A session of its own, so closing the terminal that ran pcsxroo does not take the
+		// emulator with it; and stdio pointed away from this process's pipes, so a caller
+		// reading launch's output to the end is not held open for the emulator's lifetime.
+		setsid();
+		const int devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0)
+		{
+			dup2(devnull, STDIN_FILENO);
+			dup2(devnull, STDOUT_FILENO);
+			dup2(devnull, STDERR_FILENO);
+			if (devnull > STDERR_FILENO)
+				close(devnull);
+		}
+
+		execv(c_args[0], c_args.data());
+		_exit(127);
+	}
+
+	pid = static_cast<u64>(child);
+
+	const auto exited = [child](std::string& why) {
+		int status = 0;
+		if (waitpid(child, &status, WNOHANG) != child)
+			return false;
+
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
+			why = "the emulator could not be executed";
+		else if (WIFEXITED(status))
+			why = fmt::format("the emulator exited (code {}) before its debug server answered", WEXITSTATUS(status));
+		else
+			why = "the emulator was killed before its debug server answered";
+
+		return true;
+	};
+	const auto release = []() {};
 #endif
 
 	// Polling is the right tool here: there is no other signal that the server is up.
@@ -152,12 +285,24 @@ bool PcsxrooLaunch::Run(const Options& options, u64& pid, std::string& error)
 			std::string response;
 			std::string request_error;
 			if (client.Request(R"({"id":1,"cmd":"version"})", response, request_error))
+			{
+				release();
 				return true;
+			}
+		}
+
+		// Checked every tick, so a crash at startup is reported in a moment rather than after
+		// the whole ready timeout.
+		if (exited(error))
+		{
+			release();
+			return false;
 		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
+	release();
 	error = fmt::format("the emulator did not answer on port {} within {} ms", options.port,
 		options.ready_timeout_ms);
 	return false;

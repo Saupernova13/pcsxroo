@@ -9,8 +9,11 @@ add_pcsx2_test(pcsxroo_test
 	debugger_control_tests.cpp
 	memory_search_tests.cpp
 	pcsxroo_args_tests.cpp
+	pcsxroo_launch_tests.cpp
 	pcsxroo_render_tests.cpp
 	${CMAKE_SOURCE_DIR}/pcsxroo/cli/Args.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/cli/Client.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/cli/Launch.cpp
 	${CMAKE_SOURCE_DIR}/pcsxroo/cli/Render.cpp
 	${CMAKE_SOURCE_DIR}/tests/ctest/core/StubHost.cpp
 )
