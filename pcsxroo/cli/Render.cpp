@@ -7,8 +7,13 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cctype>
 #include <string_view>
+
+// Nothing here assumes the shape of a reply. A renderer that crashes on a reply it did not
+// expect loses the reply and the exit code with it, so every member is looked up with its
+// type checked, and a shape that does not fit falls back to the generic dump.
 
 namespace
 {
@@ -32,6 +37,9 @@ namespace
 
 	std::string Text(const rapidjson::Value& parent, const char* name, const char* fallback = "")
 	{
+		if (!parent.IsObject())
+			return fallback;
+
 		const auto it = parent.FindMember(name);
 		if (it == parent.MemberEnd())
 			return fallback;
@@ -39,9 +47,36 @@ namespace
 		return Scalar(it->value);
 	}
 
-	bool Has(const rapidjson::Value& parent, const char* name)
+	// The named member when it exists and is an object, otherwise null.
+	const rapidjson::Value* Object(const rapidjson::Value& parent, const char* name)
 	{
-		return parent.FindMember(name) != parent.MemberEnd();
+		if (!parent.IsObject())
+			return nullptr;
+
+		const auto it = parent.FindMember(name);
+		return (it != parent.MemberEnd() && it->value.IsObject()) ? &it->value : nullptr;
+	}
+
+	// The named member when it exists and is an array, otherwise null.
+	const rapidjson::Value* Array(const rapidjson::Value& parent, const char* name)
+	{
+		if (!parent.IsObject())
+			return nullptr;
+
+		const auto it = parent.FindMember(name);
+		return (it != parent.MemberEnd() && it->value.IsArray()) ? &it->value : nullptr;
+	}
+
+	int HexDigit(char c)
+	{
+		if (c >= '0' && c <= '9')
+			return c - '0';
+		if (c >= 'a' && c <= 'f')
+			return c - 'a' + 10;
+		if (c >= 'A' && c <= 'F')
+			return c - 'A' + 10;
+
+		return -1;
 	}
 
 	// A key/value dump that stays readable for shapes with no dedicated renderer, so a new
@@ -110,29 +145,33 @@ namespace
 		fmt::print("state    {}{}\n", Text(result, "vm_state"),
 			Text(result, "paused") == "true" ? " (paused)" : "");
 
-		if (Has(result, "game"))
+		if (const rapidjson::Value* game = Object(result, "game"))
 		{
-			const rapidjson::Value& game = result["game"];
-			fmt::print("game     {} [{}] crc {}\n", Text(game, "title"), Text(game, "serial"),
-				Text(game, "crc_hex"));
+			fmt::print("game     {} [{}] crc {}\n", Text(*game, "title"), Text(*game, "serial"),
+				Text(*game, "crc_hex"));
 		}
 
-		if (Has(result, "ee"))
-			fmt::print("ee pc    {}\n", Text(result["ee"], "pc_hex"));
-		if (Has(result, "iop"))
-			fmt::print("iop pc   {}\n", Text(result["iop"], "pc_hex"));
+		if (const rapidjson::Value* ee = Object(result, "ee"))
+			fmt::print("ee pc    {}\n", Text(*ee, "pc_hex"));
+		if (const rapidjson::Value* iop = Object(result, "iop"))
+			fmt::print("iop pc   {}\n", Text(*iop, "pc_hex"));
 
-		if (Has(result, "last_stop") && Text(result["last_stop"], "reason") != "none")
-			Stop(result["last_stop"]);
+		const rapidjson::Value* last_stop = Object(result, "last_stop");
+		if (last_stop && Text(*last_stop, "reason") != "none")
+			Stop(*last_stop);
 	}
 
 	void Disassembly(const rapidjson::Value& result)
 	{
-		if (!Has(result, "instructions"))
+		const rapidjson::Value* instructions = Array(result, "instructions");
+		if (!instructions)
+		{
+			Generic(result);
 			return;
+		}
 
 		std::string current_symbol;
-		for (const rapidjson::Value& line : result["instructions"].GetArray())
+		for (const rapidjson::Value& line : instructions->GetArray())
 		{
 			const std::string symbol = Text(line, "symbol");
 			if (!symbol.empty() && symbol != current_symbol)
@@ -141,20 +180,28 @@ namespace
 				fmt::print("\n{}:\n", symbol);
 			}
 
-			fmt::print("  {}  {}  {}\n", Text(line, "addr_hex"), Text(line, "opcode_hex").substr(2),
-				Text(line, "text"));
+			// The column is narrower without the prefix, but only an actual prefix comes off.
+			std::string opcode = Text(line, "opcode_hex");
+			if (opcode.size() > 2 && opcode[0] == '0' && (opcode[1] == 'x' || opcode[1] == 'X'))
+				opcode.erase(0, 2);
+
+			fmt::print("  {}  {}  {}\n", Text(line, "addr_hex"), opcode, Text(line, "text"));
 		}
 	}
 
 	void Registers(const rapidjson::Value& result)
 	{
-		if (!Has(result, "registers"))
+		const rapidjson::Value* registers = Array(result, "registers");
+		if (!registers)
+		{
+			Generic(result);
 			return;
+		}
 
 		fmt::print("pc  {}\n", Text(result, "pc_hex"));
 
 		int column = 0;
-		for (const rapidjson::Value& reg : result["registers"].GetArray())
+		for (const rapidjson::Value& reg : registers->GetArray())
 		{
 			fmt::print("{:<6} {:<18}", Text(reg, "name"), Text(reg, "string"));
 			if (++column % 3 == 0)
@@ -167,15 +214,21 @@ namespace
 
 	void Breakpoints(const rapidjson::Value& result)
 	{
-		const rapidjson::Value& list = result["breakpoints"];
-		if (list.Empty())
+		const rapidjson::Value* list = Array(result, "breakpoints");
+		if (!list)
+		{
+			Generic(result);
+			return;
+		}
+
+		if (list->Empty())
 		{
 			fmt::print("no breakpoints\n");
 			return;
 		}
 
 		fmt::print("{:<12} {:<4} {:<8} {}\n", "ADDRESS", "CPU", "STATE", "CONDITION / DESCRIPTION");
-		for (const rapidjson::Value& bp : list.GetArray())
+		for (const rapidjson::Value& bp : list->GetArray())
 		{
 			std::string state = Text(bp, "enabled") == "true" ? "enabled" : "disabled";
 			if (Text(bp, "temporary") == "true")
@@ -193,16 +246,23 @@ namespace
 	void MemoryRead(const rapidjson::Value& result)
 	{
 		const std::string data = Text(result, "data");
-		if (Text(result, "format") != "hex")
+		const bool is_hex = (data.size() % 2) == 0 &&
+							std::all_of(data.begin(), data.end(), [](char c) { return HexDigit(c) >= 0; });
+
+		// Anything but an even run of hex digits is shown as sent rather than half decoded.
+		if (Text(result, "format") != "hex" || !is_hex)
 		{
 			Generic(result);
 			return;
 		}
 
 		u64 base = 0;
-		const auto addr = result.FindMember("addr");
-		if (addr != result.MemberEnd() && addr->value.IsUint64())
-			base = addr->value.GetUint64();
+		if (result.IsObject())
+		{
+			const auto addr = result.FindMember("addr");
+			if (addr != result.MemberEnd() && addr->value.IsUint64())
+				base = addr->value.GetUint64();
+		}
 
 		for (size_t offset = 0; offset < data.size(); offset += 32)
 		{
@@ -215,7 +275,7 @@ namespace
 				spaced += row.substr(i, 2);
 				spaced += ' ';
 
-				const int byte = std::stoi(row.substr(i, 2), nullptr, 16);
+				const int byte = (HexDigit(row[i]) << 4) | HexDigit(row[i + 1]);
 				ascii += (byte >= 0x20 && byte < 0x7F) ? static_cast<char>(byte) : '.';
 			}
 
