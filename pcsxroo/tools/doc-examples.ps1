@@ -7,7 +7,8 @@
 #
 #   .\doc-examples.ps1
 $ErrorActionPreference = 'Continue'
-$R = "C:\Users\RaaViVi\Documents\github\pcsxroo"
+# The repository root, found from this script's own place in pcsxroo\tools, so any clone works.
+$R = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $cli = "$R\bin\pcsxroo.exe"
 $pass = 0; $fail = 0
 
