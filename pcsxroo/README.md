@@ -20,6 +20,10 @@ its problems to them.
 
 Everything PCSXROO adds is in this `pcsxroo/` directory; the rest of the repository is PCSX2.
 
+**Prebuilt downloads** for Windows, Linux and macOS are on the
+[Releases page](https://github.com/Saupernova13/pcsxroo/releases); each release says what its
+files are and what to do first. The rest of this document is for building it yourself.
+
 ## 2. Prerequisites
 
 On Windows 10 or 11, x64:

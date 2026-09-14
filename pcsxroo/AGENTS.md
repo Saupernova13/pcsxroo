@@ -78,5 +78,12 @@ gone".
   started by the timeout is cancelled, so capturing locals by reference is safe.
 - CI builds and runs the unit tests on Windows, Linux and macOS on every push. The helper
   scripts in `pcsxroo/tools/` are Windows only.
+- **Releasing:** push an annotated tag named `pcsxroo-vX.Y.Z` on a green `master`
+  (`git tag -a pcsxroo-v1.0.0 -m "PCSXROO 1.0.0"`, then `git push origin pcsxroo-v1.0.0`).
+  `.github/workflows/pcsxroo_release.yml` builds all three platforms and publishes them as a
+  GitHub Release with `pcsxroo/docs/release-notes.md` as its notes. Never tag PCSXROO `vX.Y.Z`:
+  a build at a tag of PCSX2's shape switches on PCSX2's auto-updater, which offers to replace
+  PCSXROO with upstream PCSX2. That workflow and `.github/README.md` are the only files PCSXROO
+  adds outside `pcsxroo/`.
 - Commits are conventional (`fix(cli): ...`) and end with ` (AI-assisted)` when an AI wrote
   them.

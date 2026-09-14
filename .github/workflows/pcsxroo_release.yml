@@ -1,0 +1,109 @@
+# PCSXROO: builds PCSXROO for Windows, Linux and macOS and publishes the builds as a GitHub
+# Release. Push a tag named pcsxroo-vX.Y.Z to run it:
+#
+#   git tag -a pcsxroo-v1.0.0 -m "PCSXROO 1.0.0"
+#   git push origin pcsxroo-v1.0.0
+#
+# The tag is deliberately not PCSX2's vX.Y.Z. A build at a tag of that shape counts as a PCSX2
+# release (cmake/Pcsx2Utils.cmake), which switches on PCSX2's auto-updater - and that would offer
+# to replace PCSXROO with upstream PCSX2.
+#
+# The builds reuse PCSX2's own build workflows unchanged. This file is new; no upstream workflow
+# is edited.
+
+name: PCSXROO Release
+
+on:
+  push:
+    tags:
+      - "pcsxroo-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build_windows_deps:
+    name: "Windows Dependencies"
+    uses: ./.github/workflows/windows_deps_build.yml
+
+  build_windows:
+    needs: build_windows_deps
+    name: "Windows"
+    uses: ./.github/workflows/windows_build_qt.yml
+    with:
+      jobName: "Windows Build"
+      artifactPrefixName: "PCSXROO-windows-x64"
+      configuration: CMake
+      buildSystem: cmake
+      fetchTags: true
+    secrets: inherit
+
+  build_linux:
+    name: "Linux"
+    uses: ./.github/workflows/linux_build_qt.yml
+    with:
+      jobName: "AppImage Build"
+      artifactPrefixName: "PCSXROO-linux-x64-appimage"
+      compiler: clang
+      # appimage-qt.sh packages build/bin/pcsx2-qt, so the executable inside the AppImage keeps
+      # PCSX2's name. The AppImage file itself is named for PCSXROO below.
+      cmakeflags: "-DPCSX2_EXE_NAME=pcsx2-qt"
+      buildAppImage: true
+      fetchTags: true
+    secrets: inherit
+
+  build_macos:
+    name: "macOS"
+    uses: ./.github/workflows/macos_build.yml
+    with:
+      jobName: "MacOS Build"
+      artifactPrefixName: "PCSXROO-macos-x64"
+      fetchTags: true
+    secrets: inherit
+
+  publish:
+    needs: [build_windows, build_linux, build_macos]
+    name: "Publish Release"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Package Release Assets
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#pcsxroo-v}"
+          mkdir -p out
+          ls -1 artifacts
+
+          windows=$(find artifacts -mindepth 1 -maxdepth 1 -type d -name 'PCSXROO-windows-x64*' ! -name '*-symbols' | head -n 1)
+          test -n "$windows" && test -f "$windows/pcsxroo-qt.exe" && test -f "$windows/pcsxroo.exe"
+          # Portable from the start, so a downloaded PCSXROO never reads or writes the settings of
+          # a PCSX2 installed on the same machine.
+          touch "$windows/portable.ini"
+          (cd "$windows" && zip -qr9 "$GITHUB_WORKSPACE/out/PCSXROO-${version}-windows-x64.zip" .)
+
+          appimage=$(find artifacts -name '*.AppImage' | head -n 1)
+          test -n "$appimage"
+          cp "$appimage" "out/PCSXROO-${version}-linux-x64.AppImage"
+
+          macos=$(find artifacts -name '*.tar.xz' | head -n 1)
+          test -n "$macos"
+          cp "$macos" "out/PCSXROO-${version}-macos-x64.tar.xz"
+
+          ls -l out
+
+      - name: Publish the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "PCSXROO ${GITHUB_REF_NAME#pcsxroo-v}" \
+            --notes-file pcsxroo/docs/release-notes.md \
+            --verify-tag

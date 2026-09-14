@@ -5,6 +5,9 @@ server and a `pcsxroo` command line client, so an agent or a script can run a wh
 session - boot a game, drive the pad, set breakpoints, read memory and registers, take screenshots -
 without touching the user interface. It is a debugging rig, not a PCSX2 for playing games.
 
+**Download:** prebuilt Windows, Linux and macOS builds are on the
+[Releases page](https://github.com/Saupernova13/pcsxroo/releases).
+
 **Start here: [`pcsxroo/README.md`](../pcsxroo/README.md)** - prerequisites, building, first launch,
 the command line and the Python tooling.
 
