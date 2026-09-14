@@ -22,3 +22,8 @@ target_link_libraries(pcsxroo_test PUBLIC
 	PCSX2
 	common
 )
+
+# Upstream's unittests target runs ctest only in tests/ctest, so it builds this suite (via
+# add_pcsx2_test) but would never run it. Running it as it is built means `unittests`, and
+# therefore CI on every platform, fails when a PCSXROO test does.
+add_custom_command(TARGET pcsxroo_test POST_BUILD COMMAND pcsxroo_test)

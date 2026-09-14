@@ -26,6 +26,13 @@ if not exist "%REPO%\build\tests\ctest" (
 
 set "PATH=%REPO%\deps\bin;%REPO%\3rdparty\winpixeventruntime\bin;%PATH%"
 
-cd /d "%REPO%\build\tests\ctest" || exit /b 1
-"%CTEST%" --output-on-failure %*
-endlocal
+rem Upstream's suites and pcsxroo_test live in separate ctest trees: upstream enables testing
+rem only under tests\ctest, and PCSXROO's tests stay out of it so no upstream file changes.
+set "FAILED=0"
+for %%D in ("%REPO%\build\tests\ctest" "%REPO%\build\pcsxroo\tests") do (
+  if exist "%%~D\CTestTestfile.cmake" (
+    echo === ctest in %%~D ===
+    "%CTEST%" --test-dir "%%~D" --output-on-failure %* || set "FAILED=1"
+  )
+)
+exit /b %FAILED%

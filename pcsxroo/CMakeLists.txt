@@ -8,5 +8,8 @@
 add_subdirectory(cli)
 
 if(ENABLE_TESTS)
+	# Upstream calls enable_testing() only inside tests/ctest, which does not reach this
+	# directory, so without this pcsxroo_test would never be registered with ctest.
+	enable_testing()
 	add_subdirectory(tests)
 endif()
