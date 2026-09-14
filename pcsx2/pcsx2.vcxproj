@@ -59,6 +59,8 @@
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='ARM64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\vixl\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\demangler\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\ccc\src</AdditionalIncludeDirectories>
+      <!-- PCSXROO: rapidjson, for the debug server's JSON protocol. -->
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\rapidjson\include</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>PrecompiledHeader.h</PrecompiledHeaderFile>
       <ForcedIncludeFiles>PrecompiledHeader.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>

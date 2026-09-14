@@ -819,6 +819,10 @@ set(pcsx2DebugServerHeaders
 	${CMAKE_SOURCE_DIR}/pcsxroo/server/MemorySearch.h
 	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebuggerControl.h)
 
+# PCSXROO: the debug server speaks JSON through rapidjson. Linked explicitly: the core used to
+# see it only because discord-rpc's own link leaked the include path.
+target_link_libraries(PCSX2_FLAGS INTERFACE rapidjson)
+
 # DebugTools sources
 set(pcsx2DebugToolsSources
 	DebugTools/DebugInterface.cpp
