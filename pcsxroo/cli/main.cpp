@@ -26,6 +26,13 @@ namespace
 		return PCSXROO_USAGE;
 	}
 
+	// A request that got no reply in time is exit 4; one whose connection went away is exit 3,
+	// because "still busy" and "the emulator is gone" call for different next steps.
+	int FailureExit(const PcsxrooClient& client)
+	{
+		return client.LastFailure() == PcsxrooClient::Failure::Timeout ? PCSXROO_TIMEOUT : PCSXROO_NO_CONNECTION;
+	}
+
 	// Splits a reply into ok/error, printing whichever applies. Returns the process exit
 	// code, so a timeout stays distinguishable from any other server error.
 	int ReportResponse(const std::string& cmd, const std::string& response, bool raw)
@@ -143,7 +150,7 @@ namespace
 		if (!finished)
 		{
 			fmt::print(stderr, "pcsxroo: {}\n", error);
-			return PCSXROO_NO_CONNECTION;
+			return FailureExit(client);
 		}
 
 		return PCSXROO_OK;
@@ -195,7 +202,7 @@ int main(int argc, char* argv[])
 	if (!client.Request(request.json, response, error))
 	{
 		fmt::print(stderr, "pcsxroo: {}\n", error);
-		return PCSXROO_TIMEOUT;
+		return FailureExit(client);
 	}
 
 	return ReportResponse(request.cmd, response, global.json);

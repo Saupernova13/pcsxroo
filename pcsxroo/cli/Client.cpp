@@ -3,6 +3,7 @@
 
 #include "pcsxroo/cli/Client.h"
 
+#include <cerrno>
 #include <cstring>
 
 #ifdef _WIN32
@@ -15,10 +16,19 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+// A send to a connection the emulator has just closed raises SIGPIPE, which would kill this
+// process before it could report exit code 3. Linux suppresses that per call with
+// MSG_NOSIGNAL; macOS has no such flag and gets SO_NOSIGPIPE on the socket in Connect instead.
+#ifdef MSG_NOSIGNAL
+#define PCSXROO_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define PCSXROO_SEND_FLAGS 0
+#endif
 #define socket_close(s) close(static_cast<int>(s))
 #define socket_recv(s, buf, len) recv(static_cast<int>(s), (buf), (len), 0)
-#define socket_send(s, buf, len) send(static_cast<int>(s), (buf), (len), MSG_NOSIGNAL)
+#define socket_send(s, buf, len) send(static_cast<int>(s), (buf), (len), PCSXROO_SEND_FLAGS)
 #endif
 
 namespace
@@ -55,6 +65,26 @@ namespace
 		setsockopt(static_cast<int>(sock), SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
 #endif
 	}
+
+	// A receive that ran out of time, as opposed to one that failed because the connection
+	// went away. The two are different exit codes.
+	bool LastErrorWasTimeout()
+	{
+#ifdef _WIN32
+		return WSAGetLastError() == WSAETIMEDOUT;
+#else
+		return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+	}
+
+	bool LastErrorWasInterrupt()
+	{
+#ifdef _WIN32
+		return false;
+#else
+		return errno == EINTR;
+#endif
+	}
 } // namespace
 
 PcsxrooClient::~PcsxrooClient()
@@ -73,12 +103,12 @@ void PcsxrooClient::Close()
 
 bool PcsxrooClient::Connect(const std::string& host, int port, u32 timeout_ms, std::string& error)
 {
+	m_failure = Failure::Closed;
+
 #ifdef _WIN32
 	if (!EnsureWinsock(error))
 		return false;
 #endif
-
-	m_timeout_ms = timeout_ms;
 
 	const auto sock = socket(AF_INET, SOCK_STREAM, 0);
 #ifdef _WIN32
@@ -90,6 +120,11 @@ bool PcsxrooClient::Connect(const std::string& host, int port, u32 timeout_ms, s
 		error = "could not create a socket";
 		return false;
 	}
+
+#ifdef SO_NOSIGPIPE
+	const int no_sigpipe = 1;
+	setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+#endif
 
 	sockaddr_in address = {};
 	address.sin_family = AF_INET;
@@ -110,6 +145,7 @@ bool PcsxrooClient::Connect(const std::string& host, int port, u32 timeout_ms, s
 	}
 
 	m_sock = static_cast<std::intptr_t>(sock);
+	m_failure = Failure::None;
 	SetReceiveTimeout(m_sock, timeout_ms);
 	return true;
 }
@@ -134,13 +170,27 @@ bool PcsxrooClient::ReadLine(std::string& out, std::string& error)
 		const auto received = socket_recv(m_sock, chunk, sizeof(chunk));
 		if (received == 0)
 		{
+			m_failure = Failure::Closed;
 			error = "the emulator closed the connection";
 			return false;
 		}
 
 		if (received < 0)
 		{
-			error = "timed out waiting for a reply";
+			if (LastErrorWasInterrupt())
+				continue;
+
+			if (LastErrorWasTimeout())
+			{
+				m_failure = Failure::Timeout;
+				error = "timed out waiting for a reply";
+			}
+			else
+			{
+				m_failure = Failure::Closed;
+				error = "lost the connection to the emulator";
+			}
+
 			return false;
 		}
 
@@ -150,6 +200,15 @@ bool PcsxrooClient::ReadLine(std::string& out, std::string& error)
 
 bool PcsxrooClient::Request(const std::string& line, std::string& response, std::string& error)
 {
+	m_failure = Failure::None;
+
+	if (m_sock == -1)
+	{
+		m_failure = Failure::Closed;
+		error = "not connected to the emulator";
+		return false;
+	}
+
 	const std::string framed = line + "\n";
 	size_t sent = 0;
 	while (sent < framed.size())
@@ -157,7 +216,8 @@ bool PcsxrooClient::Request(const std::string& line, std::string& response, std:
 		const auto written = socket_send(m_sock, framed.data() + sent, framed.size() - sent);
 		if (written <= 0)
 		{
-			error = "could not send the request";
+			m_failure = Failure::Closed;
+			error = "could not send the request; the connection to the emulator was lost";
 			return false;
 		}
 

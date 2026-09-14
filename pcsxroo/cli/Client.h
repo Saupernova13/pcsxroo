@@ -5,6 +5,7 @@
 
 #include "common/Pcsx2Types.h"
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -22,6 +23,14 @@ enum PcsxrooExit
 class PcsxrooClient
 {
 public:
+	// Why the last call failed, so the caller can pick between exit codes 3 and 4.
+	enum class Failure
+	{
+		None,
+		Timeout, // no reply in time: the emulator is busy or wedged, but still there
+		Closed,  // the connection is gone: the emulator exited or dropped this client
+	};
+
 	~PcsxrooClient();
 
 	bool Connect(const std::string& host, int port, u32 timeout_ms, std::string& error);
@@ -35,6 +44,8 @@ public:
 	bool Stream(const std::string& line, const std::function<bool(const std::string&)>& on_line,
 		std::string& error);
 
+	Failure LastFailure() const { return m_failure; }
+
 private:
 	bool ReadLine(std::string& out, std::string& error);
 
@@ -42,5 +53,5 @@ private:
 	// platform includes.
 	std::intptr_t m_sock = -1;
 	std::string m_buffer;
-	u32 m_timeout_ms = 5000;
+	Failure m_failure = Failure::None;
 };
