@@ -98,9 +98,11 @@ bool PcsxrooArgs::ParseGlobal(std::vector<std::string>& argv, Global& out, std::
 	if (TakeOption(argv, "--timeout", value, error))
 	{
 		int timeout = 0;
-		if (!ParseInt(value, timeout) || timeout < 0)
+		// 0 used to be accepted, and meant "do not wait at all" to the server but "wait
+		// forever" to the socket.
+		if (!ParseInt(value, timeout) || timeout <= 0)
 		{
-			error = "invalid timeout: " + value;
+			error = "invalid timeout (must be at least 1 ms): " + value;
 			return false;
 		}
 

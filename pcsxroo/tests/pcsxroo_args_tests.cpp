@@ -77,6 +77,17 @@ TEST(PcsxrooArgs, RecordsWhetherTimeoutWasGivenExplicitly)
 	EXPECT_TRUE(global.timeout_explicit);
 }
 
+TEST(PcsxrooArgs, RejectsAZeroOrNegativeTimeout)
+{
+	for (const char* bad : {"0", "-5"})
+	{
+		std::vector<std::string> argv{"--timeout", bad, "wait"};
+		PcsxrooArgs::Global global;
+		std::string error;
+		EXPECT_FALSE(PcsxrooArgs::ParseGlobal(argv, global, error)) << bad;
+	}
+}
+
 TEST(PcsxrooArgs, ParsesEveryNumberFormTheProtocolAccepts)
 {
 	u64 value = 0;

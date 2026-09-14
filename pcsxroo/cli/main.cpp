@@ -11,6 +11,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -24,6 +25,23 @@ namespace
 
 		PcsxrooCommands::PrintUsage();
 		return PCSXROO_USAGE;
+	}
+
+	// The server bounds every command itself - a boot is allowed a minute, a loadstate thirty
+	// seconds - so the socket timeout is only a backstop against a wedged emulator, and must
+	// never cut off a reply the server is still legitimately producing. It used to be 5 s for
+	// everything but wait and step, which cut off reset, frame-advance, boot and loadstate.
+	u32 SocketTimeout(const PcsxrooCommands::Request& request, const PcsxrooArgs::Global& global)
+	{
+		// The CPU-thread dispatch ahead of a command's own wait, plus the round trip.
+		constexpr u32 OVERHEAD_MS = 2000 + 5000;
+		// Longer than the longest fixed budget on the server, which is boot's 60 s.
+		constexpr u32 BACKSTOP_MS = 90000;
+
+		if (request.command_timeout_ms != 0)
+			return request.command_timeout_ms + OVERHEAD_MS;
+
+		return global.timeout_explicit ? global.timeout_ms : BACKSTOP_MS;
 	}
 
 	// A request that got no reply in time is exit 4; one whose connection went away is exit 3,
@@ -161,8 +179,18 @@ int main(int argc, char* argv[])
 {
 	std::vector<std::string> args(argv + 1, argv + argc);
 
-	if (args.empty() || args[0] == "--help" || args[0] == "-h" || args[0] == "help")
+	if (args.empty())
 		return Usage({});
+
+	// Asked-for help is a success, and is honoured wherever it appears: "pcsxroo bp add --help"
+	// used to try to set a breakpoint at "--help".
+	if (args[0] == "help" || std::find_if(args.begin(), args.end(), [](const std::string& arg) {
+			return arg == "--help" || arg == "-h";
+		}) != args.end())
+	{
+		PcsxrooCommands::PrintUsage();
+		return PCSXROO_OK;
+	}
 
 	PcsxrooArgs::Global global;
 	std::string error;
@@ -179,20 +207,19 @@ int main(int argc, char* argv[])
 	}
 
 	if (args[0] == "events")
+	{
+		if (args.size() > 1)
+			return Usage("events takes no arguments; unexpected " + args[1]);
+
 		return RunEvents(global);
+	}
 
 	PcsxrooCommands::Request request;
 	if (!PcsxrooCommands::Build(args, global, request, error))
 		return Usage(error);
 
 	PcsxrooClient client;
-	// wait and step can legitimately block far longer than a normal request, so the socket
-	// timeout follows the command's own timeout with headroom for the round trip.
-	const u32 socket_timeout =
-		(request.cmd == "wait" || request.cmd == "step") ? (global.timeout_explicit ? global.timeout_ms : 60000) + 5000
-														 : global.timeout_ms;
-
-	if (!client.Connect(global.host, global.port, socket_timeout, error))
+	if (!client.Connect(global.host, global.port, SocketTimeout(request, global), error))
 	{
 		fmt::print(stderr, "pcsxroo: {}\n", error);
 		return PCSXROO_NO_CONNECTION;
