@@ -23,7 +23,7 @@ file is the exhaustive list.
 ```
 pcsxroo\tools\build.cmd              build emulator + CLI into bin\
 pcsxroo\tools\seed-portable.ps1      copy BIOS/settings from an existing PCSX2
-pcsxroo\tools\smoke-test.ps1 -Bios   verify the whole path (28 checks)
+pcsxroo\tools\smoke-test.ps1 -Bios   verify the whole path end to end
 ```
 
 Then either let the CLI start the emulator:
@@ -60,7 +60,15 @@ pcsxroo [global flags] <group> <verb> [arguments]
 | `--host H` | `127.0.0.1` | Server host. |
 | `--cpu ee\|iop` | `ee` | Which CPU the command addresses. |
 | `--json` | off | Print the raw JSON reply instead of rendering it. |
-| `--timeout MS` | 5000 | Request timeout. For `wait` and `step` it also sets the command's own timeout. |
+| `--timeout MS` | the server's own limits | For `wait`, `step`, `pause` and `frame-advance`: the command's own time limit (defaults 60000, 5000, 2000 and 10000). For any other command: give up after MS with no reply. At least 1. |
+| `--help`, `-h` | | Print the command list and exit 0. Honoured anywhere on the line. |
+
+Without `--timeout` the CLI waits as long as the server allows the command (a boot gets 60
+seconds, a loadstate 30), so a slow command is never cut off by the client.
+
+Global flags may appear before or after the command. Anything a command does not take - an
+unknown option, a second comparison, an extra argument - is a usage error rather than being
+ignored, so quote an expression that contains spaces: `eval "a0 == 2"`.
 
 ### Exit codes
 
@@ -68,9 +76,9 @@ pcsxroo [global flags] <group> <verb> [arguments]
 |---|---|
 | 0 | Success |
 | 1 | The server returned an error |
-| 2 | Usage error (bad arguments, unknown command) |
-| 3 | Could not connect — the emulator is not running |
-| 4 | Timed out, or the server returned a `timeout` error |
+| 2 | Usage error (bad arguments, unknown command or option) |
+| 3 | Could not connect, or the connection was lost — the emulator is not running or has exited |
+| 4 | No reply in time, or the server returned a `timeout` error |
 
 **3 and 4 are deliberately different.** A script must be able to tell "no breakpoint hit
 yet" from "the emulator is gone".
@@ -152,10 +160,11 @@ Starts a VM in an emulator that is already up. Fails if one is already running.
 | `fast_boot` | bool | ini | Skip the console intro. |
 
 Exactly one of `path`, `elf` or `bios:true` is required. Returns
-`{"booted":true,"vm_state":"running"}`. Booting takes tens of seconds; allow for it.
+`{"booted":true,"vm_state":"running"}`. Booting takes tens of seconds; the server allows it
+60, and the CLI waits for that without being told to.
 
 ```
-pcsxroo --timeout 120000 boot "G:\roms\ps2\game.iso"
+pcsxroo boot "G:\roms\ps2\game.iso"
 pcsxroo boot --bios
 ```
 
@@ -305,8 +314,11 @@ indistinguishable from a successful write, so check `verified`.
 | `session` | number | — continue a previous result set |
 | `type` | `u8`…`u64`, `i8`…`i64`, `f32`, `f64` | `u32` |
 | `comparison` | see below | `eq` |
-| `value` | number | — |
+| `value` | number | — required by every comparison except `unknown`, `increased`, `decreased`, `changed` and `not_changed` |
 | `max_results` | number | 1000, max 100000 |
+
+On the command line a value is `0x` hex, decimal, a negative number such as `-1`, or a real
+number such as `1.5` for `f32` and `f64`.
 
 Comparisons: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `increased`, `increased_by`, `decreased`,
 `decreased_by`, `changed`, `changed_by`, `not_changed`, `unknown`.
@@ -470,7 +482,6 @@ breakpoint is added to a running game — are **not** reported as stops. Without
 | `parse_error` | The request line was not valid JSON |
 | `io_error` | A file could not be read or written |
 | `unsupported` | A valid request the emulator cannot satisfy right now |
-| `internal_error` | A handler threw; the server stays up |
 
 A malformed line is answered with `parse_error` and the connection survives.
 

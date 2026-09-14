@@ -5,23 +5,26 @@ This is a fork of PCSX2 that exposes the debugger over a loopback JSON server an
 game, drive the pad, set breakpoints, read memory and registers, take screenshots - without
 touching the user interface.
 
+Everything PCSXROO adds lives in this `pcsxroo/` directory. The repository root's
+`AGENTS.md` is PCSX2's own guide and still applies to emulator code - including its rule
+never to open issues or pull requests against the PCSX2 project from here.
+
 There are two ways to be here, and they want different documents.
 
 ## Using PCSXROO to debug a game
 
-Read **[pcsxroo/docs/agent-guide.md](pcsxroo/docs/agent-guide.md)** first: it is
-task-shaped and lists the traps. **[pcsxroo/docs/cli.md](pcsxroo/docs/cli.md)** is the
-exhaustive command and protocol reference. `pcsxroo --help` carries the same command list.
-**[pcsxroo/docs/ps2ee.md](pcsxroo/docs/ps2ee.md)** covers the Python analysis tooling
-under `pcsxroo/ps2ee/`.
+Set it up with [README.md](README.md). Then read **[docs/agent-guide.md](docs/agent-guide.md)**:
+it is task-shaped and lists the traps. **[docs/cli.md](docs/cli.md)** is the exhaustive
+command and protocol reference, and `pcsxroo --help` carries the same command list.
+**[docs/ps2ee.md](docs/ps2ee.md)** covers the Python analysis tooling in `ps2ee/` and `tools/`.
 
 ```
-pcsxroo\tools\build.cmd                          build emulator + CLI into bin\
-pcsxroo\tools\seed-portable.ps1                  copy BIOS/settings from an existing PCSX2
-pcsxroo\tools\smoke-test.ps1 -Bios               28 checks over the whole path
+pcsxroo\tools\build.cmd                  build emulator + CLI into bin\
+pcsxroo\tools\seed-portable.ps1          copy BIOS/settings from an existing PCSX2
+pcsxroo\tools\smoke-test.ps1 -Bios       check the whole path end to end
 
 bin\pcsxroo.exe launch
-bin\pcsxroo.exe --timeout 120000 boot "G:\roms\ps2\game.iso"
+bin\pcsxroo.exe boot "G:\roms\ps2\game.iso"
 bin\pcsxroo.exe input press Start
 bin\pcsxroo.exe pause
 bin\pcsxroo.exe reg dump --category GPR
@@ -34,26 +37,46 @@ The four things most likely to cost you time:
 - **Screenshots need a *running* VM** - a paused GS never presents a frame.
 - **Expressions have no `$`**: `--cond "a0 == 2"`, not `$a0`.
 
-Exit codes are the interface: 0 ok, 1 server error, 2 usage, 3 cannot connect, 4 timed out.
-3 and 4 differ on purpose - "no breakpoint yet" is not "the emulator is gone".
+Exit codes are the interface: 0 ok, 1 server error, 2 usage, 3 cannot connect or connection
+lost, 4 timed out. 3 and 4 differ on purpose - "no breakpoint yet" is not "the emulator is
+gone".
 
 ## Working on PCSXROO itself
 
-- Build with `pcsxroo\tools\build.cmd`, test with `pcsxroo\tools\test.cmd`. **Release is
-  the default and is required**: a Devel build cannot boot a VM at all, failing hard just
-  after the game database loads. `PCSXROO_BUILD_TYPE=Devel` exists for core work that never
-  needs to run a game.
-- New code lives in `pcsx2/DebugServer/` (server, commands, JSON, search),
-  `pcsx2/DebugTools/DebuggerControl.*` (stepping and stop events, shared with the Qt
-  debugger window) and `pcsxroo/cli/` (the client, which links neither PCSX2 nor Qt).
-- Every new file under `pcsx2/` goes in three places: `pcsx2/CMakeLists.txt`,
-  `pcsx2/pcsx2.vcxproj` and `pcsx2/pcsx2.vcxproj.filters`. Check with
-  `.github/workflows/scripts/windows/validate-vs-filters.ps1`.
+- Build with `pcsxroo\tools\build.cmd`, test with `pcsxroo\tools\build.cmd unittests` or
+  `pcsxroo\tools\test.cmd`. **Release is the default and is required**: a Devel build cannot
+  boot a VM at all, failing hard just after the game database loads.
+  `PCSXROO_BUILD_TYPE=Devel` exists for core work that never needs to run a game.
+- Where the code is:
+
+  | Path | What |
+  |---|---|
+  | `pcsxroo/server/` | Debug server, commands, JSON, dispatch, memory search, and `DebuggerControl` (stepping and stop events, shared with the Qt debugger window). Compiled into the core. |
+  | `pcsxroo/cli/` | The `pcsxroo` client. Links neither PCSX2 nor Qt. |
+  | `pcsxroo/tests/` | `pcsxroo_test`, run as part of `unittests`. |
+  | `pcsxroo/ps2ee/`, `pcsxroo/tools/` | Python library and scripts; the build and test scripts. |
+  | `pcsxroo/docs/` | The documents above. |
+
+- The only upstream files the fork edits are build wiring (`CMakeLists.txt`,
+  `pcsx2/CMakeLists.txt`, `pcsx2/pcsx2.vcxproj` and its `.filters`, `pcsx2-qt/CMakeLists.txt`),
+  the config flag (`pcsx2/Config.h`, `pcsx2/Pcsx2Config.cpp`), the VM lifecycle
+  (`pcsx2/VMManager.*`), the debugger step refactor (`pcsx2-qt/Debugger/DebuggerWindow.*`),
+  branding (`pcsx2-qt/MainWindow.ui`) and unattended start (`pcsx2-qt/QtHost.cpp`,
+  `pcsx2-qt/Translations.cpp`). Every such edit carries a `PCSXROO:` comment; keep it that
+  way, so `git grep -n "PCSXROO:"` finds every conflict site on an upstream sync. Add new
+  code under `pcsxroo/` rather than editing more upstream files.
+- A new server source file goes in three places: `pcsx2/CMakeLists.txt`,
+  `pcsx2/pcsx2.vcxproj` and `pcsx2/pcsx2.vcxproj.filters`, each marked `PCSXROO:`. Check with
+  `.github/workflows/scripts/windows/validate-vs-filters.ps1`. A new test goes in
+  `pcsxroo/tests/CMakeLists.txt`.
+- **PCSX2 builds with exceptions disabled** (`-fno-exceptions`, `_HAS_EXCEPTIONS=0`). A `try`
+  block does not compile on GCC or Clang, and a throw ends the emulator. Report bad input
+  through `Fail`, and never call anything that throws on it (`std::stoi` and friends).
 - Anything touching VM or CPU state must go through
   `DebugServerDispatch::RunOnCPUThreadWithTimeout`, never `Host::RunOnCPUThread(fn, true)` -
-  that one cannot time out and will hang a client on a wedged emulator.
-- The design and implementation history are in `docs/superpowers/`.
-
-The upstream PCSX2 agent guide follows, and still applies to emulator code.
-
----
+  that one cannot time out and will hang a client on a wedged emulator. A task that has not
+  started by the timeout is cancelled, so capturing locals by reference is safe.
+- CI builds and runs the unit tests on Windows, Linux and macOS on every push. The helper
+  scripts in `pcsxroo/tools/` are Windows only.
+- Commits are conventional (`fix(cli): ...`) and end with ` (AI-assisted)` when an AI wrote
+  them.

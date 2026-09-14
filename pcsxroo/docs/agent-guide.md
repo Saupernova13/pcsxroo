@@ -10,8 +10,7 @@ order, and what will bite you.
 
 ```
 pcsxroo launch                                  # emulator up, no VM yet
-pcsxroo --timeout 120000 boot "G:\roms\ps2\game.iso"
-                                                # boot takes tens of seconds
+pcsxroo boot "G:\roms\ps2\game.iso"            # boot takes tens of seconds; the CLI waits
 pcsxroo input press Start                       # get past the splash screens
 pcsxroo pause                                   # now registers and the stack are readable
 pcsxroo reg get a0
@@ -30,8 +29,8 @@ Check exit codes rather than parsing text:
 |---|---|
 | 0 | Continue. |
 | 1 | The server said no. Read `error.code` — it is actionable. |
-| 2 | You typed the command wrong. Fix the command, do not retry. |
-| 3 | The emulator is not running. `launch` it. |
+| 2 | You typed the command wrong - an unknown option or an extra argument counts. Fix the command, do not retry. |
+| 3 | The emulator is not running, or exited mid-request. `launch` it. |
 | 4 | Timed out. For `wait`, that usually means "not yet", not "broken". |
 
 Add `--json` when you need to parse a reply. The human rendering is for logs.
@@ -84,7 +83,7 @@ If you are hunting something that changes and the watchpoint stays silent, use
 Games open on unskippable logos. Drive through them:
 
 ```
-pcsxroo --timeout 120000 boot "G:\roms\ps2\game.iso"
+pcsxroo boot "G:\roms\ps2\game.iso"
 for i in 1 2 3 4 5 6; do sleep 5; pcsxroo input press Start; done
 pcsxroo screenshot work/where-am-i.png    # look before you act
 ```
@@ -181,7 +180,7 @@ Without `--wait-flush` the reply is `queued` and compression is still running.
 - **Fresh install behaves oddly.** Run `pcsxroo\tools\seed-portable.ps1`. Without a BIOS the
   emulator stops at its setup wizard, before the server ever starts.
 
-`pcsxroo\tools\smoke-test.ps1 -Bios` runs 28 checks over the whole path and is the quickest
+`pcsxroo\tools\smoke-test.ps1 -Bios` checks the whole path end to end and is the quickest
 way to tell whether the problem is your commands or the build.
 
 ## Ground rules
