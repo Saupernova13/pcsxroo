@@ -95,8 +95,8 @@ def require_identity() -> GameIdentity:
     """The bound identity, or a clear failure when none was bound."""
     if identity is None:
         raise RuntimeError(
-            "no game identity bound - set it in local.json under \"GAME\", "
-            "or call config.bind(config.GameIdentity(...)) first"
+            f"no game identity bound - copy {LOCAL_JSON.with_name('local.json.example')} to {LOCAL_JSON.name} "
+            "and fill in its \"GAME\" block, or call config.bind(config.GameIdentity(...)) first"
         )
     return identity
 
@@ -105,11 +105,23 @@ SCRATCH_DIR = Path(_setting("SCRATCH_DIR", str(TOOLS / "work")))
 
 # --- emulator discovery ----------------------------------------------------
 
-_CANDIDATE_PCSX2_DIRS = [
-    Path(os.environ.get("APPDATA", "")) / "EmuDeck" / "Emulators" / "PCSX2-Qt",
-    Path(os.environ.get("APPDATA", "")) / "PCSX2",
-    Path(os.environ.get("USERPROFILE", "")) / "Documents" / "PCSX2",
-]
+def _pcsx2_dir_candidates() -> list[Path]:
+    """Where PCSX2 keeps its data on each platform. An unset variable adds nothing: joined
+    onto an empty string it would become a path relative to wherever the tool was run."""
+    candidates = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates += [Path(appdata) / "EmuDeck" / "Emulators" / "PCSX2-Qt", Path(appdata) / "PCSX2"]
+    profile = os.environ.get("USERPROFILE")
+    if profile:
+        candidates.append(Path(profile) / "Documents" / "PCSX2")
+    home = Path.home()
+    candidates.append(Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "PCSX2")
+    candidates.append(home / "Library" / "Application Support" / "PCSX2")
+    return candidates
+
+
+_CANDIDATE_PCSX2_DIRS = _pcsx2_dir_candidates()
 
 
 def pcsx2_dir() -> Path:
@@ -178,7 +190,7 @@ def pcsxroo_dir() -> Path:
     if explicit:
         return Path(explicit)
     for candidate in _CANDIDATE_PCSXROO_DIRS:
-        if (candidate / "pcsxroo.exe").exists():
+        if (candidate / "pcsxroo.exe").is_file() or (candidate / "pcsxroo").is_file():
             return candidate
     raise FileNotFoundError(
         "Could not locate PCSXROO. Set PCSXROO_DIR in the environment or in "

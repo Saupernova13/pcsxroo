@@ -1,0 +1,15 @@
+{
+  "GAME": {
+    "serial": "SLUS-21678",
+    "crc": "428113C2",
+    "elf_name": "SLUS_216.78",
+    "game": "Dragon Ball Z: Budokai Tenkaichi 3",
+    "text_base": 1048576,
+    "text_end": 2896832,
+    "data_base": 2896896,
+    "bss_end": 3361784,
+    "gp_base": 3162736,
+    "safe_zone": 983040,
+    "safe_zone_size": 32768
+  }
+}
