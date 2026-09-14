@@ -801,21 +801,23 @@ else()
 	list(APPEND pcsx2SPU2Sources ${pcsx2SPU2SourcesUnshared})
 endif()
 
-# DebugServer sources
+# PCSXROO: the debug server and DebuggerControl live in pcsxroo/server and compile into the
+# core, because they need its headers and its link.
 set(pcsx2DebugServerSources
-	DebugServer/DebugServer.cpp
-	DebugServer/DebugServerCommands.cpp
-	DebugServer/DebugServerDispatch.cpp
-	DebugServer/DebugServerJson.cpp
-	DebugServer/MemorySearch.cpp)
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServer.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerCommands.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerDispatch.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerJson.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/MemorySearch.cpp
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebuggerControl.cpp)
 
-# DebugServer headers
 set(pcsx2DebugServerHeaders
-	DebugServer/DebugServer.h
-	DebugServer/DebugServerCommands.h
-	DebugServer/DebugServerDispatch.h
-	DebugServer/DebugServerJson.h
-	DebugServer/MemorySearch.h)
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServer.h
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerCommands.h
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerDispatch.h
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebugServerJson.h
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/MemorySearch.h
+	${CMAKE_SOURCE_DIR}/pcsxroo/server/DebuggerControl.h)
 
 # DebugTools sources
 set(pcsx2DebugToolsSources
@@ -827,7 +829,6 @@ set(pcsx2DebugToolsSources
 	DebugTools/MipsAssemblerTables.cpp
 	DebugTools/MipsStackWalk.cpp
 	DebugTools/Breakpoints.cpp
-	DebugTools/DebuggerControl.cpp
 	DebugTools/SymbolGuardian.cpp
 	DebugTools/SymbolImporter.cpp
 	DebugTools/DisR3000A.cpp
@@ -839,7 +840,6 @@ set(pcsx2DebugToolsSources
 # DebugTools headers
 set(pcsx2DebugToolsHeaders
 	DebugTools/DebugInterface.h
-	DebugTools/DebuggerControl.h
 	DebugTools/DisassemblyManager.h
 	DebugTools/ExpressionParser.h
 	DebugTools/MIPSAnalyst.h

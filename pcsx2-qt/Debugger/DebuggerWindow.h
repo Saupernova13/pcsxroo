@@ -6,7 +6,7 @@
 #include "ui_DebuggerWindow.h"
 
 #include "DebugTools/DebugInterface.h"
-#include "DebugTools/DebuggerControl.h"
+#include "pcsxroo/server/DebuggerControl.h"
 
 #include <kddockwidgets/MainWindow.h>
 #include <QtCore/QTimer>

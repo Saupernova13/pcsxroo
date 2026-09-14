@@ -125,10 +125,3 @@ CMakeSettings.json
 /ci-artifacts/
 /out/
 /.cache/
-
-# Python tooling under tools/pcsxroo
-__pycache__/
-*.pyc
-/tools/pcsxroo/local.json
-/tools/pcsxroo/work/
-

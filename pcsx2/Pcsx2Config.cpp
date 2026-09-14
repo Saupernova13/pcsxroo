@@ -9,7 +9,7 @@
 #include "common/StringUtil.h"
 #include "common/SmallString.h"
 #include "Config.h"
-#include "DebugServer/DebugServer.h"
+#include "pcsxroo/server/DebugServer.h"
 #include "GS.h"
 #include "CDVD/CDVDcommon.h"
 #include "Host.h"

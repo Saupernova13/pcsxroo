@@ -1,0 +1,7 @@
+# Python caches from ps2ee and the analysis tools
+__pycache__/
+*.pyc
+
+# Machine-local configuration and scratch output
+/local.json
+/work/

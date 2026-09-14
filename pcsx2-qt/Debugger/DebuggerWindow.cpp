@@ -9,7 +9,7 @@
 
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/Breakpoints.h"
-#include "DebugTools/DebuggerControl.h"
+#include "pcsxroo/server/DebuggerControl.h"
 #include "DebugTools/MIPSAnalyst.h"
 #include "DebugTools/MipsStackWalk.h"
 #include "DebugTools/SymbolImporter.h"

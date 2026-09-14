@@ -52,9 +52,6 @@ if(ENABLE_QT_UI)
 	add_subdirectory(pcsx2-qt)
 endif()
 
-# PCSXROO debugger CLI: a thin client over the debug server, no Qt.
-add_subdirectory(pcsxroo-cli)
-
 # Updater is Windows only for now.
 if (WIN32)
 	add_subdirectory(updater)
@@ -65,6 +62,10 @@ if(ENABLE_TESTS)
 	add_subdirectory(3rdparty/googletest)
 	add_subdirectory(tests/ctest)
 endif()
+
+# PCSXROO: everything PCSXROO adds - the debugger CLI, and its unit tests when
+# ENABLE_TESTS is on. Added after tests/ctest so add_pcsx2_test already exists.
+add_subdirectory(pcsxroo)
 
 # gsrunner
 if(ENABLE_GSRUNNER)
