@@ -35,7 +35,8 @@ The four things most likely to cost you time:
 - **Always pass `--since` to `wait`**, or you will block for a stop that already happened.
 - **Registers, `stack`, `step` and `run-to` need a paused VM**; everything else does not.
 - **Screenshots need a *running* VM** - a paused GS never presents a frame.
-- **Expressions have no `$`**: `--cond "a0 == 2"`, not `$a0`.
+- **Expressions have no `$`, and their numbers are hex**: `--cond "a0 == 2"`, not `$a0`; and
+  `--cond "t5 == 0x1ADD9D0"`, because a bare `28170704` means `0x28170704` and never matches.
 
 Exit codes are the interface: 0 ok, 1 server error, 2 usage, 3 cannot connect or connection
 lost, 4 timed out. 3 and 4 differ on purpose - "no breakpoint yet" is not "the emulator is

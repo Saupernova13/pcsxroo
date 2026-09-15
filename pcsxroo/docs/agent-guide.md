@@ -67,9 +67,16 @@ A breakpoint that keeps firing counts as paused here. If one is armed somewhere 
 re-pauses before it can present a frame, and your capture silently never arrives. Clear it
 before you look at the screen.
 
-**5. Registers in expressions have no `$`.** `--cond "a0 == 2"` works; `--cond "$a0 == 2"`
-is rejected with `Invalid operator`. The `$` form is accepted only by `reg get` / `reg set`,
-which take a name rather than an expression. Equality is `==`, never `=`.
+**5. Registers in expressions have no `$`, and numbers in them are hex.** `--cond "a0 == 2"`
+works; `--cond "$a0 == 2"` is rejected with `Invalid operator`. The `$` form is accepted only
+by `reg get` / `reg set`, which take a name rather than an expression. Equality is `==`,
+never `=`.
+
+The number trap is quieter: the debugger's parser reads every bare number as hex, so
+`--cond "t5 == 28170704"` means `t5 == 0x28170704`. Nothing complains - the breakpoint is
+armed and simply never fires, which looks exactly like code that never runs. Write `0x`
+on every number in a condition, `eval` or address expression. A plain all-digit address
+such as `bp add 1227728` is the one place a bare number is decimal.
 
 **6. A write memcheck that never fires may be aimed at a perfectly correct address.**
 PCSX2's memchecks do not observe every write path — `mc add` tells you so in a `note`.
