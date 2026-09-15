@@ -207,6 +207,28 @@ try {
         $deadline = (Get-Date).AddSeconds(10)
         while (-not (Test-Path $shot) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
         Check 'screenshot lands on disk' (Test-Path $shot) $shot
+
+        # --- 12. shutdown while paused ---
+        # A paused VM leaves the emulator thread blocked in its event loop. Shutdown has to
+        # wake that loop, or vm_state sits at "stopping" forever and every later boot is
+        # refused with "already running".
+        $null = Send @('pause')
+        $down = Send @('shutdown')
+        Check 'shutdown is accepted while paused' ($down.result.stopping -eq $true) $down.error.code
+
+        $state = ''
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline) {
+            $state = (Send @('status')).result.vm_state
+            if ($state -eq 'shutdown') { break }
+            Start-Sleep -Milliseconds 250
+        }
+        Check 'a paused VM reaches shutdown' ($state -eq 'shutdown') "still $state after 15s"
+
+        if ($state -eq 'shutdown') {
+            Invoke-Cli (@('--timeout', '120000') + $bootArgs)
+            Check 'the emulator boots again after a paused shutdown' ($script:lastExit -eq 0) "exit $($script:lastExit)"
+        }
     }
 } catch {
     Write-Host "FAIL  $_"
