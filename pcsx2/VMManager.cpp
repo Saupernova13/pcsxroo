@@ -280,6 +280,13 @@ void VMManager::SetState(VMState state)
 	SetTimerResolutionIncreased(state == VMState::Running);
 	s_state.store(state, std::memory_order_release);
 
+	// PCSXROO: any pause the frame advance countdown did not cause - a breakpoint, a memcheck,
+	// a pause request, a step - or a shutdown cancels the rest of the advance. Left armed, the
+	// leftover count kept ticking once the VM ran again and paused it by itself with a stop
+	// nobody asked for. The countdown's own pause arrives with the count already at zero.
+	if (state == VMState::Paused || state == VMState::Stopping)
+		s_frame_advance_count = 0;
+
 	if (state != VMState::Stopping && (state == VMState::Paused || old_state == VMState::Paused))
 	{
 		const bool paused = (state == VMState::Paused);

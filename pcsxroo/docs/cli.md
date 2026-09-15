@@ -203,6 +203,11 @@ using `wait`.
 `count` (1–600, default 1), `timeout_ms` (default 10000). Advances that many frames and
 pauses again. Returns `{"frames":2,"stop":{...}}`.
 
+A breakpoint or memcheck that fires first ends the advance where it fires: `stop.reason`
+says which, and `frames` is still the number requested. The frames that did not run are
+dropped, so a later `run` runs freely instead of pausing when they would have run out. Any
+other pause - `pause`, a step, a shutdown - cancels a pending advance the same way.
+
 ### wait
 
 | Argument | Type | Default |
