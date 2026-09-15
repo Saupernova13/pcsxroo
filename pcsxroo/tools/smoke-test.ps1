@@ -172,6 +172,24 @@ try {
         $twice = Send @('bp', 'remove', ("0x{0:x}" -f $target))
         Check 'removing twice is idempotent' ($twice.result.removed -eq $false) 'not idempotent'
 
+        # A stop that cuts a frame advance short has to cancel the frames it did not run.
+        # Otherwise the leftover count keeps ticking once the VM runs again, and a plain
+        # run pauses by itself a moment later with a stop nobody asked for.
+        $advancePc = (Send @('status')).result.ee.pc
+        $advanceTarget = $advancePc + 4
+        $null = Send @('bp', 'add', ("0x{0:x}" -f $advanceTarget))
+        $advanced = Send @('frame-advance', '60')
+        Check 'a breakpoint ends a frame advance early' `
+            ($advanced.result.stop.reason -in @('breakpoint', 'step')) $advanced.result.stop.reason
+        $null = Send @('bp', 'remove', ("0x{0:x}" -f $advanceTarget))
+
+        $advanceSeq = $advanced.result.stop.seq
+        $null = Send @('run')
+        $spurious = Send @('--timeout', '3000', 'wait', '--since', "$advanceSeq")
+        Check 'running after an interrupted frame advance does not pause by itself' `
+            ($script:lastExit -eq 4) "stopped: $($spurious.result.reason) seq $($spurious.result.seq)"
+        $null = Send @('pause')
+
         # --- 7. stepping ---
         $before = (Send @('status')).result.ee.pc
         $stepped = Send @('step', 'into')
