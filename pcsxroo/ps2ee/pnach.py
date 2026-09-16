@@ -8,6 +8,7 @@ E-code conditionals.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -153,9 +154,27 @@ class Pnach:
         self.groups.append(group)
         return group
 
-    def validate(self) -> list[str]:
-        """Problems that would silently produce a no-op or a crash."""
+    def validate(self, exclusive: Iterable[Iterable[str]] | None = None) -> list[str]:
+        """Problems that would silently produce a no-op or a crash.
+
+        Two groups writing the same address is normally a bug: whichever the
+        cheat engine reaches last wins, so a fix can be silently undone by an
+        unrelated one. Some groups are alternatives, though - several settings
+        for one display aspect, say - and are meant to write the same words,
+        with only one ever switched on. Pass those names together in
+        `exclusive` and an overlap between them is not reported.
+
+        A name in `exclusive` that no group has is itself reported, so that
+        renaming a group cannot quietly drop its exemption.
+        """
         problems: list[str] = []
+        names = {group.name for group in self.groups}
+        alternatives: dict[str, int] = {}
+        for index, names_in_set in enumerate(exclusive or ()):
+            for name in names_in_set:
+                if name not in names:
+                    problems.append(f"exclusive: no group is named {name!r}")
+                alternatives[name] = index
         seen: dict[tuple[str, int], str] = {}
         for group in self.groups:
             pending_condition = False
@@ -197,9 +216,15 @@ class Pnach:
                         )
                 # A conditional line consumes the condition above it.
                 key = (line.cpu, line.target)
-                if not pending_condition and key in seen:
+                earlier = seen.get(key)
+                same_set = (
+                    earlier is not None
+                    and group.name in alternatives
+                    and alternatives.get(earlier) == alternatives[group.name]
+                )
+                if not pending_condition and earlier is not None and not same_set:
                     problems.append(
-                        f"{where}: overwrites an earlier write from {seen[key]}"
+                        f"{where}: overwrites an earlier write from {earlier}"
                     )
                 seen[key] = group.name
                 pending_condition = False
