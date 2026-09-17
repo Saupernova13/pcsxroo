@@ -457,7 +457,14 @@ namespace
 
 		// Queued without waiting for completion: shutting the VM down tears down the very
 		// thread we would be waiting on.
-		Host::RunOnCPUThread([]() { VMManager::SetState(VMState::Stopping); });
+		//
+		// Through the host, not VMManager::SetState(Stopping) directly. A paused VM leaves the
+		// host's CPU thread blocked in its own wait - the Qt emulator thread sits in its event
+		// loop - and only the host knows how to wake it. Setting the state alone left a paused
+		// VM at "stopping" forever, refusing every later boot. Called on the CPU thread with
+		// no confirmation this is the same path a game takes when it asks to shut down, so no
+		// prompt, memory card check or save state gets in the way.
+		Host::RunOnCPUThread([]() { Host::RequestVMShutdown(false, false, false); });
 
 		rapidjson::Document result;
 		result.SetObject();
