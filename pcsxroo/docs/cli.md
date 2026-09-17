@@ -110,6 +110,14 @@ main+0x40       an expression, resolved by the debugger's parser
 Literals resolve locally; anything else is evaluated on the CPU thread, which costs a round
 trip and can come back as `bad_address`.
 
+**Numbers inside an expression are hex, even without a prefix.** The two paths above read
+numbers differently. A plain literal is decimal when it is all digits (`1227728`) and hex
+when it has a prefix or a hex letter (`0x12BBD0`, `12BBD0`). Everything the debugger's parser
+handles - an address like `main+0x40` or `1227728+4`, a `bp add --cond`, `eval` - reads
+every bare number as hex, so `eval "10"` is 16 and `--cond "t5 == 28170704"` compares against
+`0x28170704`. A decimal value in a condition is not an error, it simply never matches.
+Write `0x` everywhere and the question never comes up.
+
 **Registers in expressions have no `$`.** `a0 == 2` is valid; `$a0 == 2` is rejected with
 `Invalid operator`. The `$` prefix is accepted *only* by `reg get` / `reg set`, which take a
 register name rather than an expression. `==` is the equality operator; `=` is not.
